@@ -313,9 +313,21 @@ function drawPixelRect(
 export function MarioGame() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const keysRef = useRef({ left: false, right: false, jump: false });
+  const bossImageRef = useRef<HTMLImageElement | null>(null);
   const [runId, setRunId] = useState(0);
   const [level, setLevel] = useState(1);
   const [hud, setHud] = useState<HudState>({ coins: 0, totalCoins: 0, level: 1, lives: 5, status: 'playing' });
+
+  useEffect(() => {
+    const image = new Image();
+    image.src = '/boss.png';
+    image.onload = () => {
+      bossImageRef.current = image;
+    };
+    image.onerror = () => {
+      bossImageRef.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -899,6 +911,21 @@ export function MarioGame() {
       const y = currentBoss.y;
       const step = Math.floor(animationTick / 12) % 2;
       const isHurt = performance.now() < currentBoss.hurtUntil && Math.floor(animationTick / 4) % 2 === 0;
+      const bossImage = bossImageRef.current;
+
+      if (bossImage) {
+        context.globalAlpha = isHurt ? 0.65 : 1;
+        context.drawImage(bossImage, Math.round(x - 34), Math.round(y - 18), 176, 126);
+        context.globalAlpha = 1;
+        context.fillStyle = '#24130f';
+        drawPixelRect(context, 318, 20, 324, 22);
+        context.fillStyle = '#e84a3a';
+        drawPixelRect(context, 322, 24, (316 * currentBoss.health) / currentBoss.maxHealth, 14);
+        context.fillStyle = '#ffffff';
+        context.font = '700 14px Inter, sans-serif';
+        context.fillText('BOWSER', 444, 36);
+        return;
+      }
 
       context.fillStyle = 'rgba(34, 30, 24, 0.24)';
       drawPixelRect(context, x + 22, y + 88, 98, 6);
