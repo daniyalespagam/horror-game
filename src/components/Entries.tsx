@@ -16,6 +16,11 @@ export function Entries({ userEmail }: { userEmail: string }) {
   const [error, setError] = useState('');
 
   async function load() {
+    if (!supabase) {
+      setError('Supabase keys are not configured.');
+      return;
+    }
+
     const { data, error } = await supabase
       .from('entries')
       .select('id, title, created_at')
@@ -31,6 +36,12 @@ export function Entries({ userEmail }: { userEmail: string }) {
   async function add(e: React.FormEvent) {
     e.preventDefault();
     if (!title.trim()) return;
+
+    if (!supabase) {
+      setError('Supabase keys are not configured.');
+      return;
+    }
+
     const { error } = await supabase.from('entries').insert({ title: title.trim() });
     if (error) setError(error.message);
     else {
@@ -40,6 +51,11 @@ export function Entries({ userEmail }: { userEmail: string }) {
   }
 
   async function remove(id: string) {
+    if (!supabase) {
+      setError('Supabase keys are not configured.');
+      return;
+    }
+
     const { error } = await supabase.from('entries').delete().eq('id', id);
     if (error) setError(error.message);
     else load();
