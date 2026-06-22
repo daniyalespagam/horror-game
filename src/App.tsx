@@ -4,10 +4,14 @@ import { MarioGame } from './components/MarioGame';
 import { Auth } from './components/Auth';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
 
+const guestStorageKey = 'lucky-blocks-guest';
+
 export default function App() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [session, setSession] = useState<Session | null>(null);
+  const [isGuest, setIsGuest] = useState(() => localStorage.getItem(guestStorageKey) === 'true');
   const [loadingSession, setLoadingSession] = useState(isSupabaseConfigured);
+  const canPlay = Boolean(session || isGuest);
 
   useEffect(() => {
     if (!supabase) {
@@ -30,6 +34,10 @@ export default function App() {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       setSession(nextSession);
+      if (nextSession) {
+        localStorage.removeItem(guestStorageKey);
+        setIsGuest(false);
+      }
       setIsPlaying(false);
       setLoadingSession(false);
     });
@@ -49,8 +57,20 @@ export default function App() {
     setIsPlaying(false);
   }
 
+  function continueAsGuest() {
+    localStorage.setItem(guestStorageKey, 'true');
+    setIsGuest(true);
+    setIsPlaying(true);
+  }
+
+  async function leaveGuestMode() {
+    localStorage.removeItem(guestStorageKey);
+    setIsGuest(false);
+    setIsPlaying(false);
+  }
+
   if (isPlaying) {
-    return <MarioGame />;
+    return <MarioGame userId={session?.user.id ?? null} />;
   }
 
   return (
@@ -67,7 +87,7 @@ export default function App() {
             <button
               type="button"
               className="start-button"
-              disabled={!session || loadingSession}
+              disabled={!canPlay || loadingSession}
               onClick={() => setIsPlaying(true)}
             >
               Play
@@ -100,8 +120,17 @@ export default function App() {
                 Sign out
               </button>
             </section>
+          ) : isGuest ? (
+            <section className="auth-card">
+              <p className="eyebrow">Guest</p>
+              <h2>Ready to play</h2>
+              <p className="auth-message">Progress is saved only on this device.</p>
+              <button type="button" className="ghost-button" onClick={leaveGuestMode}>
+                Leave guest mode
+              </button>
+            </section>
           ) : (
-            <Auth />
+            <Auth onGuest={continueAsGuest} />
           )}
         </div>
 

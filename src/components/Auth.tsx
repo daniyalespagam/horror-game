@@ -2,7 +2,11 @@ import type { FormEvent } from 'react';
 import { useState } from 'react';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 
-export function Auth() {
+type AuthProps = {
+  onGuest: () => void;
+};
+
+export function Auth({ onGuest }: AuthProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [mode, setMode] = useState<'signin' | 'signup'>('signup');
@@ -21,15 +25,18 @@ export function Auth() {
     }
 
     try {
+      const cleanEmail = email.trim().toLowerCase();
+
       const { error } =
         mode === 'signup'
-          ? await supabase.auth.signUp({ email, password })
-          : await supabase.auth.signInWithPassword({ email, password });
+          ? await supabase.auth.signUp({ email: cleanEmail, password })
+          : await supabase.auth.signInWithPassword({ email: cleanEmail, password });
 
       if (error) {
-        setMessage(error.message);
+        console.error('Supabase auth error:', error);
+        setMessage(getFriendlyAuthError(error.message));
       } else if (mode === 'signup') {
-        setMessage('Account created. Check your email if confirmation is enabled.');
+        setMessage('Account created. If email confirmation is enabled, check your inbox.');
       }
     } catch {
       setMessage('Something went wrong. Try again.');
@@ -73,6 +80,35 @@ export function Auth() {
       >
         {mode === 'signin' ? 'Need an account? Register' : 'Already have an account? Sign in'}
       </button>
+      <button type="button" className="guest-button" onClick={onGuest}>
+        Continue as guest
+      </button>
     </section>
   );
+}
+
+function getFriendlyAuthError(errorMessage: string) {
+  const lowerMessage = errorMessage.toLowerCase();
+
+  if (lowerMessage.includes('invalid login credentials')) {
+    return 'Wrong email or password.';
+  }
+
+  if (lowerMessage.includes('user already registered') || lowerMessage.includes('already been registered')) {
+    return 'This email is already registered. Try signing in.';
+  }
+
+  if (lowerMessage.includes('signup') && lowerMessage.includes('disabled')) {
+    return 'Registration is disabled in Supabase settings.';
+  }
+
+  if (lowerMessage.includes('password')) {
+    return 'Password must be at least 6 characters.';
+  }
+
+  if (lowerMessage.includes('email')) {
+    return 'Check that the email is typed correctly.';
+  }
+
+  return errorMessage || 'Registration failed. Check Supabase Auth settings.';
 }

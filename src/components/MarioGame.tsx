@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { supabase } from '../lib/supabase';
 
 type Rect = {
   x: number;
@@ -60,6 +61,58 @@ type HudState = {
   status: GameStatus;
   luckyText: string;
 };
+
+type GameProgress = {
+  level: number;
+  coins: number;
+  lives: number;
+  takenCoinIndexes: number[];
+  usedLuckyBlockIndexes: number[];
+  defeatedEnemyIndexes: number[];
+  bossHealth: number | null;
+  status: GameStatus;
+};
+
+type MarioGameProps = {
+  userId: string | null;
+};
+
+const guestProgressStorageKey = 'lucky-blocks-guest-progress';
+
+function createNewProgress(): GameProgress {
+  return {
+    level: 1,
+    coins: 0,
+    lives: 5,
+    takenCoinIndexes: [],
+    usedLuckyBlockIndexes: [],
+    defeatedEnemyIndexes: [],
+    bossHealth: null,
+    status: 'playing',
+  };
+}
+
+function parseNumberIndexes(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => Number(item))
+    .filter((item) => Number.isInteger(item) && item >= 0);
+}
+
+function getIndexes<T>(items: T[], predicate: (item: T) => boolean) {
+  const indexes: number[] = [];
+
+  items.forEach((item, index) => {
+    if (predicate(item)) {
+      indexes.push(index);
+    }
+  });
+
+  return indexes;
+}
 
 type JumpParticle = {
   x: number;
@@ -451,6 +504,42 @@ function copyLuckyBlocks(levelLuckyBlocks: LuckyBlock[]) {
   return levelLuckyBlocks.map((block) => ({ ...block, used: false, bounce: 0 }));
 }
 
+function loadGuestProgress(): GameProgress | null {
+  const rawProgress = localStorage.getItem(guestProgressStorageKey);
+
+  if (!rawProgress) {
+    return null;
+  }
+
+  try {
+    const parsedProgress = JSON.parse(rawProgress) as Partial<GameProgress>;
+    const level = Number(parsedProgress.level);
+    const coins = Number(parsedProgress.coins);
+    const lives = Number(parsedProgress.lives);
+    const bossHealth = parsedProgress.bossHealth === null ? null : Number(parsedProgress.bossHealth);
+    const status = parsedProgress.status === 'won' || parsedProgress.status === 'lost' ? parsedProgress.status : 'playing';
+
+    if (!Number.isFinite(level) || !Number.isFinite(coins) || !Number.isFinite(lives)) {
+      return null;
+    }
+
+    const normalizedBossHealth = Number.isFinite(bossHealth) ? Math.max(0, Math.round(Number(bossHealth))) : null;
+
+    return {
+      level: Math.max(1, Math.min(TOTAL_LEVELS, Math.round(level))),
+      coins: Math.max(0, Math.round(coins)),
+      lives: Math.max(0, Math.min(5, Math.round(lives))),
+      takenCoinIndexes: parseNumberIndexes(parsedProgress.takenCoinIndexes),
+      usedLuckyBlockIndexes: parseNumberIndexes(parsedProgress.usedLuckyBlockIndexes),
+      defeatedEnemyIndexes: parseNumberIndexes(parsedProgress.defeatedEnemyIndexes),
+      bossHealth: normalizedBossHealth,
+      status,
+    };
+  } catch {
+    return null;
+  }
+}
+
 function intersects(first: Rect, second: Rect) {
   return (
     first.x < second.x + second.width &&
@@ -470,13 +559,20 @@ function drawPixelRect(
   context.fillRect(Math.round(x), Math.round(y), Math.round(width), Math.round(height));
 }
 
-export function MarioGame() {
+export function MarioGame({ userId }: MarioGameProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const keysRef = useRef({ left: false, right: false, jump: false, fire: false });
   const bossImageRef = useRef<HTMLImageElement | null>(null);
+  const piraniaImageRef = useRef<HTMLImageElement | null>(null);
   const shopRequestRef = useRef<ShopItemId | null>(null);
+  const saveTimeoutRef = useRef<number | null>(null);
+  const progressRef = useRef<GameProgress>(createNewProgress());
+  const [loadingSave, setLoadingSave] = useState(Boolean(userId));
+  const [saveStatus, setSaveStatus] = useState(userId ? 'Loading save...' : 'Guest progress is not saved');
   const [runId, setRunId] = useState(0);
   const [level, setLevel] = useState(1);
+  const [isShopOpen, setIsShopOpen] = useState(false);
+  const [saveVersion, setSaveVersion] = useState(0);
   const [hud, setHud] = useState<HudState>({
     coins: 0,
     totalCoins: 0,
@@ -485,6 +581,91 @@ export function MarioGame() {
     status: 'playing',
     luckyText: '',
   });
+
+  useEffect(() => {
+    if (!userId) {
+      const savedGuestProgress = loadGuestProgress();
+
+      if (savedGuestProgress) {
+        progressRef.current = savedGuestProgress;
+        setLevel(savedGuestProgress.level);
+        setHud((current) => ({
+          ...current,
+          coins: savedGuestProgress.coins,
+          level: savedGuestProgress.level,
+          lives: savedGuestProgress.lives,
+        }));
+        setSaveStatus('Guest save loaded');
+      } else {
+        setSaveStatus('Guest progress saved on this device');
+      }
+
+      setLoadingSave(false);
+      return;
+    }
+
+    if (!supabase) {
+      setLoadingSave(false);
+      setSaveStatus('Supabase keys missing');
+      return;
+    }
+
+    const client = supabase;
+    let cancelled = false;
+
+    async function loadSave() {
+      setLoadingSave(true);
+      setSaveStatus('Loading save...');
+
+      const { data, error } = await client
+        .from('game_saves')
+        .select(
+          'level, coins, lives, taken_coin_indexes, used_lucky_block_indexes, defeated_enemy_indexes, boss_health, game_status',
+        )
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (cancelled) {
+        return;
+      }
+
+      if (error) {
+        console.error('Load game save error:', error);
+        setSaveStatus('Save could not be loaded');
+        setLoadingSave(false);
+        return;
+      }
+
+      const nextProgress = {
+        level: data?.level ?? 1,
+        coins: data?.coins ?? 0,
+        lives: data?.lives ?? 5,
+        takenCoinIndexes: parseNumberIndexes(data?.taken_coin_indexes),
+        usedLuckyBlockIndexes: parseNumberIndexes(data?.used_lucky_block_indexes),
+        defeatedEnemyIndexes: parseNumberIndexes(data?.defeated_enemy_indexes),
+        bossHealth: data?.boss_health ?? null,
+        status: data?.game_status === 'won' || data?.game_status === 'lost' ? data.game_status : 'playing',
+      };
+
+      progressRef.current = nextProgress;
+      setLevel(nextProgress.level);
+      setHud((current) => ({
+        ...current,
+        coins: nextProgress.coins,
+        level: nextProgress.level,
+        lives: nextProgress.lives,
+        status: nextProgress.status,
+      }));
+      setSaveStatus(data ? 'Save loaded' : 'New save will be created');
+      setLoadingSave(false);
+    }
+
+    void loadSave();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
 
   useEffect(() => {
     const image = new Image();
@@ -498,6 +679,78 @@ export function MarioGame() {
   }, []);
 
   useEffect(() => {
+    const image = new Image();
+    image.src = '/pirania.png';
+    image.onload = () => {
+      piraniaImageRef.current = image;
+    };
+    image.onerror = () => {
+      piraniaImageRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (loadingSave) {
+      return;
+    }
+
+    if (saveTimeoutRef.current) {
+      window.clearTimeout(saveTimeoutRef.current);
+    }
+
+    saveTimeoutRef.current = window.setTimeout(() => {
+      const progress = progressRef.current;
+
+      if (!userId) {
+        localStorage.setItem(guestProgressStorageKey, JSON.stringify(progress));
+        setSaveStatus('Guest saved');
+        return;
+      }
+
+      if (!supabase) {
+        setSaveStatus('Supabase keys missing');
+        return;
+      }
+
+      const client = supabase;
+
+      client
+        .from('game_saves')
+        .upsert({
+          user_id: userId,
+          level: progress.level,
+          coins: progress.coins,
+          lives: progress.lives,
+          taken_coin_indexes: progress.takenCoinIndexes,
+          used_lucky_block_indexes: progress.usedLuckyBlockIndexes,
+          defeated_enemy_indexes: progress.defeatedEnemyIndexes,
+          boss_health: progress.bossHealth,
+          game_status: progress.status,
+          updated_at: new Date().toISOString(),
+        })
+        .then(({ error }) => {
+          if (error) {
+            console.error('Save game progress error:', error);
+            setSaveStatus('Save failed');
+            return;
+          }
+
+          setSaveStatus('Saved');
+        });
+    }, 600);
+
+    return () => {
+      if (saveTimeoutRef.current) {
+        window.clearTimeout(saveTimeoutRef.current);
+      }
+    };
+  }, [loadingSave, saveVersion, userId]);
+
+  useEffect(() => {
+    if (loadingSave) {
+      return;
+    }
+
     const canvas = canvasRef.current;
 
     if (!canvas) {
@@ -513,6 +766,7 @@ export function MarioGame() {
     const context: CanvasRenderingContext2D = contextResult;
     context.imageSmoothingEnabled = false;
     const levelMap = createLevelMap(level);
+    const savedProgress = progressRef.current.level === level ? progressRef.current : createNewProgress();
 
     let animationFrame = 0;
     let cameraX = 0;
@@ -520,15 +774,17 @@ export function MarioGame() {
     let luckyBlocks = copyLuckyBlocks(levelMap.luckyBlocks);
     let enemies = copyEnemies(levelMap.enemies);
     let boss = levelMap.boss ? { ...levelMap.boss } : null;
-    let coinCount = 0;
-    let lives = 5;
-    let status: GameStatus = 'playing';
+    let coinCount = savedProgress.level === level ? savedProgress.coins : 0;
+    let lives = savedProgress.level === level ? savedProgress.lives : 5;
+    let status: GameStatus = savedProgress.level === level ? savedProgress.status : 'playing';
     let lastHud = '';
+    let lastProgressSignature = '';
     let invincibleUntil = 0;
     let jumpBoostUntil = 0;
     let speedBoostUntil = 0;
     let fireFlowerUntil = 0;
     let nextPlayerFireAt = 0;
+    let playerShootUntil = 0;
     let luckyMessage = '';
     let luckyMessageUntil = 0;
     let animationTick = 0;
@@ -540,6 +796,33 @@ export function MarioGame() {
     let nextBossFireAt = performance.now() + 1200;
     let nextBossAxeAt = performance.now() + 2100;
     let advancingLevel = false;
+
+    for (const coinIndex of savedProgress.takenCoinIndexes) {
+      if (coins[coinIndex]) {
+        coins[coinIndex].taken = true;
+      }
+    }
+
+    for (const blockIndex of savedProgress.usedLuckyBlockIndexes) {
+      if (luckyBlocks[blockIndex]) {
+        luckyBlocks[blockIndex].used = true;
+      }
+    }
+
+    for (const enemyIndex of savedProgress.defeatedEnemyIndexes) {
+      if (enemies[enemyIndex]) {
+        enemies[enemyIndex].defeated = true;
+      }
+    }
+
+    if (boss && savedProgress.bossHealth !== null) {
+      boss.health = Math.max(0, Math.min(boss.maxHealth, savedProgress.bossHealth));
+
+      if (boss.health <= 0) {
+        boss.y += 20;
+        boss.height = 38;
+      }
+    }
 
     const player = {
       x: 74,
@@ -555,6 +838,23 @@ export function MarioGame() {
     function publishHud() {
       const visibleLuckyText = performance.now() < luckyMessageUntil ? luckyMessage : '';
       const nextHud = `${coinCount}-${coins.length}-${level}-${lives}-${status}-${visibleLuckyText}`;
+      const nextProgress: GameProgress = {
+        level,
+        coins: coinCount,
+        lives,
+        takenCoinIndexes: getIndexes(coins, (coin) => coin.taken),
+        usedLuckyBlockIndexes: getIndexes(luckyBlocks, (block) => block.used),
+        defeatedEnemyIndexes: getIndexes(enemies, (enemy) => enemy.defeated),
+        bossHealth: boss ? boss.health : null,
+        status,
+      };
+      const nextProgressSignature = JSON.stringify(nextProgress);
+
+      if (nextProgressSignature !== lastProgressSignature) {
+        lastProgressSignature = nextProgressSignature;
+        progressRef.current = nextProgress;
+        setSaveVersion((current) => current + 1);
+      }
 
       if (nextHud !== lastHud) {
         lastHud = nextHud;
@@ -721,6 +1021,7 @@ export function MarioGame() {
         velocityX: player.facing * 9,
         spin: animationTick,
       });
+      playerShootUntil = now + 180;
       nextPlayerFireAt = now + 360;
     }
 
@@ -1078,6 +1379,17 @@ export function MarioGame() {
         if (level < TOTAL_LEVELS && !advancingLevel) {
           advancingLevel = true;
           keysRef.current = { left: false, right: false, jump: false, fire: false };
+          progressRef.current = {
+            level: Math.min(TOTAL_LEVELS, level + 1),
+            coins: coinCount,
+            lives: 5,
+            takenCoinIndexes: [],
+            usedLuckyBlockIndexes: [],
+            defeatedEnemyIndexes: [],
+            bossHealth: null,
+            status: 'playing',
+          };
+          setSaveVersion((current) => current + 1);
           setLevel((current) => Math.min(TOTAL_LEVELS, current + 1));
           return;
         }
@@ -1348,8 +1660,30 @@ export function MarioGame() {
         }
       }
 
-      for (const pipe of levelMap.pipes) {
+      for (const [pipeIndex, pipe] of levelMap.pipes.entries()) {
         const x = pipe.x - cameraX;
+        const hasPirania = (level + pipeIndex) % 2 === 0;
+        const piraniaImage = piraniaImageRef.current;
+
+        if (hasPirania) {
+          const bob = Math.sin(animationTick / 26 + pipeIndex) * 6;
+          const piraniaWidth = Math.min(58, pipe.width + 10);
+          const piraniaHeight = piraniaWidth;
+          const piraniaX = x + pipe.width / 2 - piraniaWidth / 2;
+          const piraniaY = pipe.y - piraniaHeight + 7 + bob;
+
+          if (piraniaImage) {
+            context.drawImage(piraniaImage, piraniaX, piraniaY, piraniaWidth, piraniaHeight);
+          } else {
+            context.fillStyle = '#d93332';
+            drawPixelRect(context, piraniaX + 12, piraniaY + 10, piraniaWidth - 24, piraniaHeight - 18);
+            context.fillStyle = '#ffffff';
+            drawPixelRect(context, piraniaX + 18, piraniaY + 16, 8, 8);
+            drawPixelRect(context, piraniaX + piraniaWidth - 26, piraniaY + 16, 8, 8);
+            context.fillStyle = '#2d8b45';
+            drawPixelRect(context, piraniaX + piraniaWidth / 2 - 4, piraniaY + piraniaHeight - 14, 8, 18);
+          }
+        }
 
         context.fillStyle = isCaveLevel ? '#2a4b57' : '#145c42';
         drawPixelRect(context, x - 5, pipe.y - 10, pipe.width + 10, 16);
@@ -1961,19 +2295,35 @@ export function MarioGame() {
 
     function drawPlayer() {
       const x = player.x - cameraX;
-      const y = player.y;
+      const isRunning = Math.abs(player.velocityX) > 0.1 && player.onGround;
+      const runFrame = isRunning ? Math.floor(animationTick / 5) % 4 : 0;
+      const runCycle = [0, 1, 0, -1][runFrame];
+      const bodyBob = isRunning && runFrame % 2 === 1 ? -2 : 0;
+      const y = player.y + bodyBob;
       const faceSide = player.facing === 1 ? 1 : -1;
       const faceX = player.facing === 1 ? x + 11 : x + 7;
       const eyeX = player.facing === 1 ? x + 24 : x + 10;
       const noseX = player.facing === 1 ? x + 26 : x + 5;
       const mustacheX = player.facing === 1 ? x + 18 : x + 10;
-      const isRunning = Math.abs(player.velocityX) > 0.1 && player.onGround;
-      const step = isRunning ? Math.floor(animationTick / 7) % 2 : 0;
-      const leftFootY = player.y + 46 + step * 2;
-      const rightFootY = player.y + 46 + (step === 0 ? 2 : 0);
-      const leftArmY = player.y + 29 + (step === 0 ? 0 : 3);
-      const rightArmY = player.y + 29 + (step === 0 ? 3 : 0);
+      const leftFootX = x - 3 - runCycle * 4;
+      const rightFootX = x + 18 + runCycle * 4;
+      const leftFootY = player.y + 46 + (runCycle === 1 ? 2 : 0);
+      const rightFootY = player.y + 46 + (runCycle === -1 ? 2 : 0);
+      const isShooting = performance.now() < playerShootUntil;
+      const shootFrame = isShooting ? Math.floor((playerShootUntil - performance.now()) / 45) % 4 : 0;
+      let leftArmX = x - 5 + runCycle * 3;
+      let rightArmX = x + 28 - runCycle * 3;
+      let leftArmY = y + 29 + (runCycle === -1 ? 4 : 0);
+      let rightArmY = y + 29 + (runCycle === 1 ? 4 : 0);
       const isBlinking = performance.now() < invincibleUntil && Math.floor(performance.now() / 90) % 2 === 0;
+
+      if (isShooting && player.facing === 1) {
+        rightArmX = x + 31 + shootFrame;
+        rightArmY = y + 20;
+      } else if (isShooting) {
+        leftArmX = x - 8 - shootFrame;
+        leftArmY = y + 20;
+      }
 
       if (isBlinking) {
         return;
@@ -1987,10 +2337,10 @@ export function MarioGame() {
       drawPixelRect(context, x, y + 4, 35, 10);
       drawPixelRect(context, x + 3, y + 10, 31, 20);
       drawPixelRect(context, x + 3, y + 27, 29, 19);
-      drawPixelRect(context, x - 5, leftArmY - 1, 11, 19);
-      drawPixelRect(context, x + 28, rightArmY - 1, 12, 19);
-      drawPixelRect(context, x - 3, leftFootY, 19, 8);
-      drawPixelRect(context, x + 18, rightFootY, 19, 8);
+      drawPixelRect(context, leftArmX, leftArmY - 1, 11, 19);
+      drawPixelRect(context, rightArmX, rightArmY - 1, 12, 19);
+      drawPixelRect(context, leftFootX, leftFootY, 19, 8);
+      drawPixelRect(context, rightFootX, rightFootY, 19, 8);
 
       context.fillStyle = '#6b2f1d';
       drawPixelRect(context, x + 4, y + 11, 27, 19);
@@ -2026,14 +2376,14 @@ export function MarioGame() {
       drawPixelRect(context, x + 21, y + 10, 12, 2);
 
       context.fillStyle = '#e23b32';
-      drawPixelRect(context, x - 4, leftArmY, 9, 11);
-      drawPixelRect(context, x + 29, rightArmY, 9, 11);
+      drawPixelRect(context, leftArmX + 1, leftArmY, 9, 11);
+      drawPixelRect(context, rightArmX + 1, rightArmY, 9, 11);
       context.fillStyle = '#f0b982';
-      drawPixelRect(context, x - 4, leftArmY + 9, 8, 5);
-      drawPixelRect(context, x + 30, rightArmY + 9, 8, 5);
+      drawPixelRect(context, leftArmX + 1, leftArmY + 9, 8, 5);
+      drawPixelRect(context, rightArmX + 2, rightArmY + 9, 8, 5);
       context.fillStyle = '#ffffff';
-      drawPixelRect(context, x - 5, leftArmY + 12, 10, 5);
-      drawPixelRect(context, x + 29, rightArmY + 12, 10, 5);
+      drawPixelRect(context, leftArmX, leftArmY + 12, 10, 5);
+      drawPixelRect(context, rightArmX + 1, rightArmY + 12, 10, 5);
 
       context.fillStyle = '#1d4f9a';
       drawPixelRect(context, x + 5, y + 28, 24, 8);
@@ -2042,22 +2392,37 @@ export function MarioGame() {
       drawPixelRect(context, x + 21, y + 25, 5, 14);
       context.fillStyle = '#2e74d0';
       drawPixelRect(context, x + 8, y + 29, 17, 5);
-      drawPixelRect(context, x + 7, y + 37, 8, 8);
-      drawPixelRect(context, x + 20, y + 37, 8, 8);
+      drawPixelRect(context, x + 7 - runCycle, y + 37, 8, 8);
+      drawPixelRect(context, x + 20 + runCycle, y + 37, 8, 8);
       context.fillStyle = '#123566';
       drawPixelRect(context, x + 15, y + 35, 5, 13);
-      drawPixelRect(context, x + 5, y + 43, 9, 4);
-      drawPixelRect(context, x + 21, y + 43, 9, 4);
+      drawPixelRect(context, x + 5 - runCycle * 2, y + 43, 9, 4);
+      drawPixelRect(context, x + 21 + runCycle * 2, y + 43, 9, 4);
       context.fillStyle = '#f5d458';
       drawPixelRect(context, x + 10, y + 34, 4, 4);
       drawPixelRect(context, x + 22, y + 34, 4, 4);
 
       context.fillStyle = '#5a2c1b';
-      drawPixelRect(context, x - 1, leftFootY, 15, 5);
-      drawPixelRect(context, x + 20, rightFootY, 15, 5);
+      drawPixelRect(context, leftFootX + 2, leftFootY, 15, 5);
+      drawPixelRect(context, rightFootX + 2, rightFootY, 15, 5);
       context.fillStyle = '#2a140e';
-      drawPixelRect(context, x - 2, leftFootY + 4, 17, 3);
-      drawPixelRect(context, x + 19, rightFootY + 4, 17, 3);
+      drawPixelRect(context, leftFootX + 1, leftFootY + 4, 17, 3);
+      drawPixelRect(context, rightFootX + 1, rightFootY + 4, 17, 3);
+
+      if (isShooting) {
+        const handX = player.facing === 1 ? rightArmX + 10 : leftArmX - 4;
+        const handY = player.facing === 1 ? rightArmY + 8 : leftArmY + 8;
+        const flashSize = 12 + shootFrame * 2;
+
+        context.fillStyle = 'rgba(255, 93, 28, 0.34)';
+        drawPixelRect(context, handX - 3, handY - 3, flashSize, flashSize);
+        context.fillStyle = '#ff5d1c';
+        drawPixelRect(context, handX, handY, 10 + shootFrame, 8 + shootFrame);
+        context.fillStyle = '#ffbd2f';
+        drawPixelRect(context, handX + 3, handY + 2, 7, 5);
+        context.fillStyle = '#fff08a';
+        drawPixelRect(context, handX + 5, handY + 3, 3, 3);
+      }
     }
 
     function drawJumpEffects() {
@@ -2189,7 +2554,7 @@ export function MarioGame() {
       window.removeEventListener('keyup', handleKeyUp);
       keysRef.current = { left: false, right: false, jump: false, fire: false };
     };
-  }, [runId, level]);
+  }, [runId, level, loadingSave]);
 
   function setControl(control: keyof typeof keysRef.current, active: boolean) {
     keysRef.current[control] = active;
@@ -2198,12 +2563,16 @@ export function MarioGame() {
   function restart() {
     keysRef.current = { left: false, right: false, jump: false, fire: false };
     shopRequestRef.current = null;
+    progressRef.current = createNewProgress();
+    setSaveVersion((current) => current + 1);
+    setHud((current) => ({ ...current, coins: 0, level: 1, lives: 5, status: 'playing', luckyText: '' }));
     setLevel(1);
     setRunId((current) => current + 1);
   }
 
   function buyShopItem(itemId: ShopItemId) {
     shopRequestRef.current = itemId;
+    setIsShopOpen(false);
   }
 
   return (
@@ -2213,9 +2582,17 @@ export function MarioGame() {
           <p className="eyebrow">nFactorial Teens</p>
           <h1>Платформер</h1>
         </div>
+        <span className="coin-counter" aria-label={`Монеты: ${hud.coins}/${hud.totalCoins}`}>
+          <span className="coin-counter-icon" aria-hidden="true" />
+          {hud.coins}/{hud.totalCoins}
+        </span>
+        <button type="button" className="topbar-restart" onClick={restart}>
+          Рестарт
+        </button>
         <div className="scoreboard">
           <span>Монеты: {hud.coins}/{hud.totalCoins}</span>
           <span>Жизни: {hud.lives}</span>
+          <span>{saveStatus}</span>
           {hud.luckyText ? <span>Prize: {hud.luckyText}</span> : null}
           <button type="button" onClick={restart}>
             Рестарт
@@ -2227,7 +2604,28 @@ export function MarioGame() {
         <canvas ref={canvasRef} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} />
       </section>
 
-      <section className="shop-panel" aria-label="Магазин">
+      <button
+        type="button"
+        className="shop-toggle"
+        aria-expanded={isShopOpen}
+        aria-controls="shop-panel"
+        onClick={() => setIsShopOpen((current) => !current)}
+      >
+        Магазин
+      </button>
+      {isShopOpen ? (
+        <button
+          type="button"
+          className="shop-backdrop"
+          aria-label="Закрыть магазин"
+          onClick={() => setIsShopOpen(false)}
+        />
+      ) : null}
+
+      <section id="shop-panel" className={`shop-panel ${isShopOpen ? 'shop-panel-open' : ''}`} aria-label="Магазин">
+        <button type="button" className="shop-close" aria-label="Закрыть магазин" onClick={() => setIsShopOpen(false)}>
+          x
+        </button>
         <div className="shop-heading">
           <p className="eyebrow">Магазин</p>
           <h2>Покупай бонусы</h2>
