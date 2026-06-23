@@ -452,10 +452,12 @@ function createLevelMap(level: number): LevelMap {
       defeated: false,
     } satisfies Enemy;
   });
-  const levelStairs = stairBlocks.map((stair, index) => ({
-    ...stair,
-    rows: Math.min(4, stair.rows + (difficulty + index) % 2),
-  }));
+  const levelStairs = isBossLevel
+    ? stairBlocks.map((stair, index) => ({
+        ...stair,
+        rows: Math.min(4, stair.rows + (difficulty + index) % 2),
+      }))
+    : [];
   const levelPipes = pipes.map((pipe, index) => ({
     ...pipe,
     height: Math.min(92, pipe.height + ((difficulty + index) % 3) * 4),
@@ -561,9 +563,10 @@ function drawPixelRect(
 
 export function MarioGame({ userId }: MarioGameProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const keysRef = useRef({ left: false, right: false, jump: false, fire: false });
+  const keysRef = useRef({ left: false, right: false, jump: false, fire: false, down: false });
   const bossImageRef = useRef<HTMLImageElement | null>(null);
   const piraniaImageRef = useRef<HTMLImageElement | null>(null);
+  const turtleImageRef = useRef<HTMLImageElement | null>(null);
   const shopRequestRef = useRef<ShopItemId | null>(null);
   const saveTimeoutRef = useRef<number | null>(null);
   const progressRef = useRef<GameProgress>(createNewProgress());
@@ -680,12 +683,23 @@ export function MarioGame({ userId }: MarioGameProps) {
 
   useEffect(() => {
     const image = new Image();
-    image.src = '/pirania.png';
+    image.src = '/pirani.png';
     image.onload = () => {
       piraniaImageRef.current = image;
     };
     image.onerror = () => {
       piraniaImageRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const image = new Image();
+    image.src = '/cherepaha.png';
+    image.onload = () => {
+      turtleImageRef.current = image;
+    };
+    image.onerror = () => {
+      turtleImageRef.current = null;
     };
   }, []);
 
@@ -795,6 +809,8 @@ export function MarioGame({ userId }: MarioGameProps) {
     let axes: Axe[] = [];
     let nextBossFireAt = performance.now() + 1200;
     let nextBossAxeAt = performance.now() + 2100;
+    let nextPipeEnterAt = 0;
+    const piraniaActivationTicks = new Map<number, number>();
     let advancingLevel = false;
 
     for (const coinIndex of savedProgress.takenCoinIndexes) {
@@ -878,6 +894,81 @@ export function MarioGame({ userId }: MarioGameProps) {
       invincibleUntil = performance.now() + 1000;
     }
 
+    function hasPirania(pipeIndex: number) {
+      return ((level * 3 + pipeIndex * 2) % 5) < 2;
+    }
+
+    function getPiraniaReveal(pipeIndex: number) {
+      const activationTick = piraniaActivationTicks.get(pipeIndex);
+
+      if (activationTick === undefined) {
+        return 0;
+      }
+
+      const cycle = (animationTick - activationTick) % 180;
+
+      if (cycle < 38) {
+        return 0;
+      }
+
+      if (cycle < 74) {
+        return (cycle - 38) / 36;
+      }
+
+      if (cycle < 126) {
+        return 1;
+      }
+
+      if (cycle < 162) {
+        return 1 - (cycle - 126) / 36;
+      }
+
+      return 0;
+    }
+
+    function getPiraniaRect(pipe: Pipe, pipeIndex: number): Rect {
+      const reveal = getPiraniaReveal(pipeIndex);
+      const width = Math.min(84, pipe.width + 26);
+      const height = width * (194 / 236);
+      const hiddenOffset = height * 0.92;
+      const bob = reveal > 0.98 ? Math.sin(animationTick / 5 + pipeIndex) * 5 : 0;
+      const sway = reveal > 0.2 ? Math.sin(animationTick / 12 + pipeIndex) * 5 : 0;
+
+      return {
+        x: pipe.x + pipe.width / 2 - width / 2 + sway,
+        y: pipe.y - height + 10 + hiddenOffset * (1 - reveal) + bob,
+        width,
+        height,
+      };
+    }
+
+    function updatePiraniaActivation() {
+      const playerCenterX = player.x + player.width / 2;
+
+      for (const [pipeIndex, pipe] of levelMap.pipes.entries()) {
+        if (!hasPirania(pipeIndex) || piraniaActivationTicks.has(pipeIndex)) {
+          continue;
+        }
+
+        const pipeCenterX = pipe.x + pipe.width / 2;
+        const isNearPipe = Math.abs(playerCenterX - pipeCenterX) < 230;
+
+        if (isNearPipe) {
+          piraniaActivationTicks.set(pipeIndex, animationTick);
+        }
+      }
+    }
+
+    function getGroundAt(x: number) {
+      return levelMap.platforms.find(
+        (platform) => platform.y === GROUND_Y && x >= platform.x + 8 && x <= platform.x + platform.width - 8,
+      );
+    }
+
+    function getGroundUnder(rect: Rect) {
+      return getGroundAt(rect.x + rect.width / 2);
+    }
+
     function loseLife() {
       if (performance.now() < invincibleUntil || status !== 'playing') {
         return;
@@ -892,6 +983,51 @@ export function MarioGame({ userId }: MarioGameProps) {
       } else {
         resetPlayer();
       }
+    }
+
+    function enterPipeIfPossible() {
+      const now = performance.now();
+
+      if (!keysRef.current.down || now < nextPipeEnterAt || status !== 'playing') {
+        return;
+      }
+
+      const playerCenterX = player.x + player.width / 2;
+      const playerBottom = player.y + player.height;
+      const currentPipeIndex = levelMap.pipes.findIndex(
+        (pipe, pipeIndex) =>
+          !hasPirania(pipeIndex) &&
+          playerCenterX >= pipe.x - 10 &&
+          playerCenterX <= pipe.x + pipe.width + 10 &&
+          playerBottom >= pipe.y + pipe.height - 28 &&
+          playerBottom <= pipe.y + pipe.height + 30,
+      );
+
+      if (currentPipeIndex < 0) {
+        return;
+      }
+
+      const safePipeIndexes = levelMap.pipes
+        .map((pipe, pipeIndex) => ({ pipe, pipeIndex }))
+        .filter(({ pipeIndex }) => !hasPirania(pipeIndex));
+
+      if (safePipeIndexes.length < 2) {
+        showGameMessage('Pipe is blocked', player.x + player.width / 2, player.y - 8);
+        nextPipeEnterAt = now + 600;
+        return;
+      }
+
+      const destination = safePipeIndexes.find(({ pipeIndex }) => pipeIndex > currentPipeIndex) ?? safePipeIndexes[0];
+      player.x = destination.pipe.x + destination.pipe.width / 2 - player.width / 2;
+      player.y = destination.pipe.y - player.height - 8;
+      player.velocityX = 0;
+      player.velocityY = 0;
+      player.onGround = false;
+      cameraX = Math.max(0, Math.min(levelMap.worldWidth - CANVAS_WIDTH, player.x - 330));
+      keysRef.current.down = false;
+      nextPipeEnterAt = now + 900;
+      invincibleUntil = Math.max(invincibleUntil, now + 500);
+      showGameMessage('Pipe travel', player.x + player.width / 2, player.y - 8);
     }
 
     function spawnJumpDust() {
@@ -1104,6 +1240,8 @@ export function MarioGame({ userId }: MarioGameProps) {
         shootPlayerFireball();
       }
 
+      enterPipeIfPossible();
+
       player.x += player.velocityX;
       player.x = Math.max(0, Math.min(levelMap.worldWidth - player.width, player.x));
 
@@ -1145,14 +1283,38 @@ export function MarioGame({ userId }: MarioGameProps) {
     }
 
     function updateWorld() {
-      for (const enemy of enemies) {
+      updatePiraniaActivation();
+
+      for (const [pipeIndex, pipe] of levelMap.pipes.entries()) {
+        if (!hasPirania(pipeIndex) || getPiraniaReveal(pipeIndex) < 0.55) {
+          continue;
+        }
+
+        if (intersects(player, getPiraniaRect(pipe, pipeIndex))) {
+          loseLife();
+          break;
+        }
+      }
+
+      for (const [enemyIndex, enemy] of enemies.entries()) {
         if (enemy.defeated) {
           continue;
         }
 
+        const isTurtle = (level + enemyIndex) % 3 === 1;
+        const previousX = enemy.x;
         enemy.x += enemy.speed * enemy.direction;
+        const frontProbeX = enemy.direction === 1 ? enemy.x + enemy.width + 32 : enemy.x - 32;
 
-        if (enemy.x < enemy.startX || enemy.x + enemy.width > enemy.endX) {
+        const ground = isTurtle ? getGroundUnder(enemy) : null;
+        const groundAhead = isTurtle ? getGroundAt(frontProbeX) : null;
+
+        if (ground) {
+          enemy.y = ground.y - enemy.height;
+        }
+
+        if (enemy.x < enemy.startX || enemy.x + enemy.width > enemy.endX || (isTurtle && (!ground || !groundAhead))) {
+          enemy.x = previousX;
           enemy.direction = enemy.direction === 1 ? -1 : 1;
         }
 
@@ -1378,7 +1540,7 @@ export function MarioGame({ userId }: MarioGameProps) {
 
         if (level < TOTAL_LEVELS && !advancingLevel) {
           advancingLevel = true;
-          keysRef.current = { left: false, right: false, jump: false, fire: false };
+          keysRef.current = { left: false, right: false, jump: false, fire: false, down: false };
           progressRef.current = {
             level: Math.min(TOTAL_LEVELS, level + 1),
             coins: coinCount,
@@ -1614,10 +1776,16 @@ export function MarioGame({ userId }: MarioGameProps) {
 
       if (isCaveLevel) {
         context.fillStyle = '#5c6070';
-        for (let spikeX = 130 - cameraX; spikeX < levelMap.worldWidth - cameraX; spikeX += 210) {
-          drawPixelRect(context, spikeX, 440, 24, 28);
-          drawPixelRect(context, spikeX + 6, 416, 12, 24);
-          drawPixelRect(context, spikeX + 10, 400, 4, 16);
+        for (const platform of levelMap.platforms) {
+          if (platform.y !== GROUND_Y) {
+            continue;
+          }
+
+          for (let spikeX = platform.x + 90 - cameraX; spikeX < platform.x + platform.width - 24 - cameraX; spikeX += 210) {
+            drawPixelRect(context, spikeX, 440, 24, 28);
+            drawPixelRect(context, spikeX + 6, 416, 12, 24);
+            drawPixelRect(context, spikeX + 10, 400, 4, 16);
+          }
         }
 
         context.fillStyle = '#8ee7ff';
@@ -1639,12 +1807,6 @@ export function MarioGame({ userId }: MarioGameProps) {
           context.fillStyle = '#f6d557';
         }
 
-        context.fillStyle = '#2d7b36';
-        for (let grassX = 48 - cameraX; grassX < levelMap.worldWidth - cameraX; grassX += 74) {
-          drawPixelRect(context, grassX, 456, 4, 12);
-          drawPixelRect(context, grassX + 5, 460, 4, 8);
-          drawPixelRect(context, grassX + 11, 452, 4, 16);
-        }
       }
 
       for (const stair of levelMap.stairBlocks) {
@@ -1662,27 +1824,40 @@ export function MarioGame({ userId }: MarioGameProps) {
 
       for (const [pipeIndex, pipe] of levelMap.pipes.entries()) {
         const x = pipe.x - cameraX;
-        const hasPirania = (level + pipeIndex) % 2 === 0;
         const piraniaImage = piraniaImageRef.current;
 
-        if (hasPirania) {
-          const bob = Math.sin(animationTick / 26 + pipeIndex) * 6;
-          const piraniaWidth = Math.min(58, pipe.width + 10);
-          const piraniaHeight = piraniaWidth;
-          const piraniaX = x + pipe.width / 2 - piraniaWidth / 2;
-          const piraniaY = pipe.y - piraniaHeight + 7 + bob;
+        if (hasPirania(pipeIndex)) {
+          const reveal = getPiraniaReveal(pipeIndex);
+          const piraniaRect = getPiraniaRect(pipe, pipeIndex);
+          const piraniaX = piraniaRect.x - cameraX;
+          const biteStretch = reveal > 0.98 ? Math.max(0, Math.sin(animationTick / 6 + pipeIndex)) * 6 : 0;
+          const piraniaY = piraniaRect.y - biteStretch;
+          const tilt = reveal > 0.35 ? Math.sin(animationTick / 14 + pipeIndex) * 0.12 : 0;
 
           if (piraniaImage) {
-            context.drawImage(piraniaImage, piraniaX, piraniaY, piraniaWidth, piraniaHeight);
+            context.save();
+            context.translate(piraniaX + piraniaRect.width / 2, piraniaY + piraniaRect.height);
+            context.rotate(tilt);
+            context.drawImage(
+              piraniaImage,
+              -piraniaRect.width / 2,
+              -piraniaRect.height - biteStretch,
+              piraniaRect.width,
+              piraniaRect.height + biteStretch,
+            );
+            context.restore();
           } else {
             context.fillStyle = '#d93332';
-            drawPixelRect(context, piraniaX + 12, piraniaY + 10, piraniaWidth - 24, piraniaHeight - 18);
+            drawPixelRect(context, piraniaX + 12, piraniaY + 10, piraniaRect.width - 24, piraniaRect.height - 18);
             context.fillStyle = '#ffffff';
             drawPixelRect(context, piraniaX + 18, piraniaY + 16, 8, 8);
-            drawPixelRect(context, piraniaX + piraniaWidth - 26, piraniaY + 16, 8, 8);
+            drawPixelRect(context, piraniaX + piraniaRect.width - 26, piraniaY + 16, 8, 8);
             context.fillStyle = '#2d8b45';
-            drawPixelRect(context, piraniaX + piraniaWidth / 2 - 4, piraniaY + piraniaHeight - 14, 8, 18);
+            drawPixelRect(context, piraniaX + piraniaRect.width / 2 - 4, piraniaY + piraniaRect.height - 14, 8, 18);
           }
+        } else {
+          context.fillStyle = 'rgba(255, 255, 255, 0.42)';
+          drawPixelRect(context, x + pipe.width / 2 - 4, pipe.y - 8, 8, 5);
         }
 
         context.fillStyle = isCaveLevel ? '#2a4b57' : '#145c42';
@@ -1878,19 +2053,49 @@ export function MarioGame({ userId }: MarioGameProps) {
     }
 
     function drawEnemies() {
-      for (const enemy of enemies) {
+      for (const [enemyIndex, enemy] of enemies.entries()) {
         if (enemy.defeated) {
           continue;
         }
 
         const x = enemy.x - cameraX;
         const y = enemy.y;
+        const isTurtle = (level + enemyIndex) % 3 === 1;
+        const turtleImage = turtleImageRef.current;
         const step = Math.floor(animationTick / 10 + enemy.x * 0.03) % 2;
         const leftFootY = y + 41 + step;
         const rightFootY = y + 41 + (step === 0 ? 1 : 0);
 
         context.fillStyle = 'rgba(34, 30, 24, 0.2)';
         drawPixelRect(context, x + 1, y + 45, 36, 4);
+
+        if (isTurtle && turtleImage) {
+          const turtleSourceX = 143;
+          const turtleSourceY = 77;
+          const turtleSourceWidth = 239;
+          const turtleSourceHeight = 351;
+          const turtleWidth = 57;
+          const turtleHeight = 74;
+          const turtleX = x + enemy.width / 2 - turtleWidth / 2;
+          const turtleY = y + enemy.height - turtleHeight + 8;
+
+          context.save();
+          context.translate(turtleX + turtleWidth / 2, turtleY + turtleHeight / 2);
+          context.scale(enemy.direction === 1 ? -1 : 1, 1);
+          context.drawImage(
+            turtleImage,
+            turtleSourceX,
+            turtleSourceY,
+            turtleSourceWidth,
+            turtleSourceHeight,
+            -turtleWidth / 2,
+            -turtleHeight / 2,
+            turtleWidth,
+            turtleHeight,
+          );
+          context.restore();
+          continue;
+        }
 
         context.fillStyle = '#24120e';
         drawPixelRect(context, x + 7, y + 3, 24, 5);
@@ -2500,7 +2705,7 @@ export function MarioGame({ userId }: MarioGameProps) {
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.code === 'KeyB') {
-        keysRef.current = { left: false, right: false, jump: false, fire: false };
+        keysRef.current = { left: false, right: false, jump: false, fire: false, down: false };
         setLevel(TOTAL_LEVELS);
         event.preventDefault();
         return;
@@ -2523,6 +2728,11 @@ export function MarioGame({ userId }: MarioGameProps) {
         keysRef.current.fire = true;
         event.preventDefault();
       }
+
+      if (event.code === 'ArrowDown' || event.code === 'KeyS') {
+        keysRef.current.down = true;
+        event.preventDefault();
+      }
     }
 
     function handleKeyUp(event: KeyboardEvent) {
@@ -2541,6 +2751,10 @@ export function MarioGame({ userId }: MarioGameProps) {
       if (event.code === 'KeyF') {
         keysRef.current.fire = false;
       }
+
+      if (event.code === 'ArrowDown' || event.code === 'KeyS') {
+        keysRef.current.down = false;
+      }
     }
 
     window.addEventListener('keydown', handleKeyDown);
@@ -2552,7 +2766,7 @@ export function MarioGame({ userId }: MarioGameProps) {
       cancelAnimationFrame(animationFrame);
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
-      keysRef.current = { left: false, right: false, jump: false, fire: false };
+      keysRef.current = { left: false, right: false, jump: false, fire: false, down: false };
     };
   }, [runId, level, loadingSave]);
 
@@ -2561,7 +2775,7 @@ export function MarioGame({ userId }: MarioGameProps) {
   }
 
   function restart() {
-    keysRef.current = { left: false, right: false, jump: false, fire: false };
+    keysRef.current = { left: false, right: false, jump: false, fire: false, down: false };
     shopRequestRef.current = null;
     progressRef.current = createNewProgress();
     setSaveVersion((current) => current + 1);

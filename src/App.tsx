@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { MarioGame } from './components/MarioGame';
 import { Auth } from './components/Auth';
+import { Reviews } from './components/Reviews';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 const guestStorageKey = 'lucky-blocks-guest';
@@ -185,6 +186,8 @@ export default function App() {
           <span>shop items</span>
         </div>
       </section>
+
+      {session ? <Reviews /> : null}
     </main>
   );
 }

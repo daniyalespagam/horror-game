@@ -532,6 +532,87 @@ h1 {
   font-weight: 800;
 }
 
+.reviews-panel {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.7fr) minmax(280px, 1fr);
+  gap: 14px;
+  margin-top: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+  background: var(--panel);
+  box-shadow: 0 8px 22px rgba(23, 32, 51, 0.06);
+}
+
+.reviews-panel h2 {
+  font-size: 22px;
+  line-height: 1.1;
+}
+
+.reviews-note,
+.reviews-empty {
+  margin-top: 8px;
+  color: #5d6678;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.review-form {
+  display: grid;
+  gap: 10px;
+}
+
+.review-form textarea {
+  min-height: 96px;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: #fbfcff;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.review-form textarea:focus {
+  border-color: var(--blue);
+  outline: 3px solid rgba(47, 104, 196, 0.16);
+}
+
+.review-list {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.review-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #fbfcff;
+  color: #28354a;
+  font-weight: 800;
+}
+
+.review-delete {
+  min-height: 36px;
+  padding: 0 12px;
+  background: #eef3fb;
+  color: var(--ink);
+}
+
+.review-delete:hover {
+  background: #dfe8f7;
+}
+
 .game-shell {
   display: grid;
   position: fixed;
@@ -1102,6 +1183,14 @@ canvas {
   .home-stats {
     grid-template-columns: 1fr;
     margin-top: 14px;
+  }
+
+  .reviews-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .review-list {
+    grid-column: auto;
   }
 
   .game-shell {
