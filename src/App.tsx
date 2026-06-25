@@ -157,36 +157,6 @@ export default function App() {
         </div>
       </section>
 
-      <section className="home-info" aria-label="Game details">
-        <div>
-          <h2>Goal</h2>
-          <p>Reach the flag, collect coins, and survive every level.</p>
-        </div>
-        <div>
-          <h2>Lucky blocks</h2>
-          <p>Hit yellow blocks from below to get coins or power-ups.</p>
-        </div>
-        <div>
-          <h2>Shop</h2>
-          <p>Spend coins on lives, speed, high jumps, and star power.</p>
-        </div>
-      </section>
-
-      <section className="home-stats" aria-label="Game features">
-        <div>
-          <strong>20</strong>
-          <span>levels</span>
-        </div>
-        <div>
-          <strong>5</strong>
-          <span>lives</span>
-        </div>
-        <div>
-          <strong>4</strong>
-          <span>shop items</span>
-        </div>
-      </section>
-
       {session ? <Reviews /> : null}
     </main>
   );

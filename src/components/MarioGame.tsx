@@ -3414,6 +3414,36 @@ export function MarioGame({ userId }: MarioGameProps) {
         return;
       }
 
+      if (event.code === 'Digit0' || event.code === 'Numpad0') {
+        keysRef.current = { left: false, right: false, jump: false, fire: false, down: false };
+        shopRequestRef.current = null;
+        progressRef.current = createNewProgress();
+        setSaveVersion((current) => current + 1);
+        setHud((current) => ({ ...current, coins: 0, level: 1, lives: 5, status: 'playing', luckyText: '' }));
+        setLevel(1);
+        setRunId((current) => current + 1);
+        event.preventDefault();
+        return;
+      }
+
+      if (event.code === 'Digit1' || event.code === 'Numpad1') {
+        goToLevel(10);
+        event.preventDefault();
+        return;
+      }
+
+      if (event.code === 'Digit2' || event.code === 'Numpad2') {
+        goToLevel(BOWSER_LEVEL);
+        event.preventDefault();
+        return;
+      }
+
+      if (event.code === 'Digit3' || event.code === 'Numpad3') {
+        goToLevel(FINAL_BOSS_LEVEL);
+        event.preventDefault();
+        return;
+      }
+
       if (event.code === 'ArrowLeft' || event.code === 'KeyA') {
         keysRef.current.left = true;
       }
@@ -3514,18 +3544,6 @@ export function MarioGame({ userId }: MarioGameProps) {
           <span className="coin-counter-icon" aria-hidden="true" />
           {hud.coins}/{hud.totalCoins}
         </span>
-        <button type="button" className="topbar-restart" onClick={restart}>
-          Рестарт
-        </button>
-        <button type="button" className="topbar-restart" onClick={() => goToLevel(10)}>
-          Level 10
-        </button>
-        <button type="button" className="topbar-restart" onClick={() => goToLevel(BOWSER_LEVEL)}>
-          Level 20
-        </button>
-        <button type="button" className="topbar-restart" onClick={() => goToLevel(FINAL_BOSS_LEVEL)}>
-          Level 30
-        </button>
         <div className="scoreboard">
           <span>Монеты: {hud.coins}/{hud.totalCoins}</span>
           <span>Жизни: {hud.lives}</span>
