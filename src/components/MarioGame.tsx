@@ -42,9 +42,13 @@ type Enemy = Rect & {
 };
 
 type Boss = Rect & {
+  kind: 'final' | 'mini';
   startX: number;
   endX: number;
   speed: number;
+  velocityY: number;
+  onGround: boolean;
+  nextJumpAt: number;
   direction: 1 | -1;
   health: number;
   maxHealth: number;
@@ -128,11 +132,24 @@ type Fireball = Rect & {
   velocityX: number;
   velocityY: number;
   spin: number;
+  kind: 'fire' | 'bubble';
 };
 
 type PlayerFireball = Rect & {
   velocityX: number;
   spin: number;
+};
+
+type TurtleShell = Rect & {
+  velocityX: number;
+  spin: number;
+};
+
+type Helper = Rect & {
+  mounted: boolean;
+  leaving: boolean;
+  velocityX: number;
+  facing: 1 | -1;
 };
 
 type Axe = Rect & {
@@ -190,12 +207,21 @@ type LevelMap = {
 
 const CANVAS_WIDTH = 960;
 const CANVAS_HEIGHT = 540;
-const BASE_WORLD_WIDTH = 3200;
-const TOTAL_LEVELS = 20;
+const BASE_WORLD_WIDTH = 4400;
+const ARENA_WORLD_WIDTH = 1800;
+const TOTAL_LEVELS = 30;
+const BOWSER_LEVEL = 20;
+const LAB_LEVEL_START = 21;
+const FINAL_BOSS_LEVEL = 30;
 const GRAVITY = 0.75;
 const MOVE_SPEED = 5.2;
 const JUMP_FORCE = -14.5;
 const GROUND_Y = 468;
+const HELPER_WIDTH = 150;
+const HELPER_HEIGHT = 150;
+const HELPER_SEAT_OFFSET_X = 54;
+const HELPER_SEAT_OFFSET_Y = 91;
+const HELPER_PLAYER_DRAW_LIFT = 0;
 
 const platforms: Platform[] = [
   { x: 0, y: GROUND_Y, width: 620, height: 72, color: '#3b8d3a' },
@@ -325,7 +351,7 @@ const enemyLayout: Enemy[] = [
 ];
 
 const flag = {
-  x: 3060,
+  x: 4260,
   y: 275,
   width: 34,
   height: 193,
@@ -368,6 +394,16 @@ const caveTheme: LevelTheme = {
   groundTop: '#6a7082',
 };
 
+const labTheme: LevelTheme = {
+  sky: '#101820',
+  horizon: '#1e2b34',
+  ridge: '#263943',
+  mountain: '#1a252c',
+  mountainLight: '#3aa6b8',
+  ground: '#303944',
+  groundTop: '#7fd9e8',
+};
+
 function buildCollisionPlatforms(levelPlatforms: Platform[], levelStairs: StairBlock[], levelLuckyBlocks: LuckyBlock[]) {
   return [
     ...levelPlatforms,
@@ -390,18 +426,33 @@ function buildCollisionPlatforms(levelPlatforms: Platform[], levelStairs: StairB
 
 function createLevelMap(level: number): LevelMap {
   const difficulty = level - 1;
-  const isBossLevel = level === TOTAL_LEVELS;
-  const theme = isBossLevel ? caveTheme : levelThemes[difficulty % levelThemes.length];
-  const worldWidth = BASE_WORLD_WIDTH;
+  const isBossLevel = level === BOWSER_LEVEL;
+  const isLabLevel = level >= LAB_LEVEL_START;
+  const isFinalBossLevel = level === FINAL_BOSS_LEVEL;
+  const isMiniBossLevel = level === 10;
+  const theme = isLabLevel ? labTheme : isBossLevel ? caveTheme : levelThemes[difficulty % levelThemes.length];
+  const worldWidth = isFinalBossLevel ? ARENA_WORLD_WIDTH : BASE_WORLD_WIDTH;
+  const arenaFlag: Flag = isFinalBossLevel
+    ? {
+        x: 1660,
+        y: 275,
+        width: 34,
+        height: 193,
+      }
+    : flag;
   const groundPlatforms = platforms.slice(0, 5).map((platform, index) => ({
     ...platform,
-    width: isBossLevel ? platform.width : platform.width + ((difficulty + index) % 3) * 18,
+    width: isBossLevel || isFinalBossLevel ? platform.width : platform.width + ((difficulty + index) % 3) * 18,
     color: theme.ground,
   }));
+  const extensionGroundPlatforms: Platform[] = [
+    { x: 3290, y: GROUND_Y, width: 420, height: 72, color: theme.ground },
+    { x: 3810, y: GROUND_Y, width: 590, height: 72, color: theme.ground },
+  ];
   const floatingLayout = floatingPlatformLayouts[difficulty % floatingPlatformLayouts.length];
-  const floatingPlatforms = isBossLevel
+  const floatingPlatforms = isBossLevel || isFinalBossLevel
     ? []
-    : floatingLayout.map((platform, index) => {
+    : floatingLayout.filter((_, index) => index % 2 === 0).map((platform, index) => {
         const yShift = (((difficulty + index * 2) % 3) - 1) * 6;
         const widthShift = ((difficulty + index) % 2) * 12;
 
@@ -409,10 +460,25 @@ function createLevelMap(level: number): LevelMap {
           ...platform,
           y: Math.max(238, Math.min(394, platform.y + yShift)),
           width: Math.max(110, platform.width + widthShift),
-          color: '#b96b2c',
+          color: isLabLevel ? '#4b6572' : '#b96b2c',
         };
       });
-  const levelPlatforms = [...groundPlatforms, ...floatingPlatforms];
+  const extensionFloatingPlatforms: Platform[] = isBossLevel || isFinalBossLevel
+    ? [
+        { x: 3590, y: 300, width: 170, height: 28, color: '#4b6572' },
+      ]
+    : [
+        { x: 3280, y: 334 + ((difficulty % 3) - 1) * 8, width: 175, height: 28, color: isLabLevel ? '#4b6572' : '#b96b2c' },
+        { x: 3860, y: 346 + (((difficulty + 2) % 3) - 1) * 8, width: 210, height: 28, color: isLabLevel ? '#4b6572' : '#b96b2c' },
+      ];
+  const arenaPlatforms: Platform[] = [
+    { x: 0, y: GROUND_Y, width: ARENA_WORLD_WIDTH, height: 72, color: theme.ground },
+    { x: 0, y: 258, width: 36, height: 210, color: '#24333d' },
+    { x: ARENA_WORLD_WIDTH - 36, y: 258, width: 36, height: 210, color: '#24333d' },
+  ];
+  const levelPlatforms = isFinalBossLevel
+    ? arenaPlatforms
+    : [...groundPlatforms, ...extensionGroundPlatforms, ...floatingPlatforms, ...extensionFloatingPlatforms];
   const extraCoins = Array.from({ length: Math.min(8, Math.floor(difficulty / 3) + 1) }, (_, index) => ({
     x: 620 + index * 305 + (difficulty % 4) * 18,
     y: 236 + ((index + difficulty) % 4) * 36,
@@ -420,12 +486,27 @@ function createLevelMap(level: number): LevelMap {
     height: 24,
     taken: false,
   }));
-  const levelCoins = [...coinLayout, ...extraCoins].map((coin, index) => ({
+  const extensionCoins: Coin[] = [
+    { x: 3350, y: 290, width: 24, height: 24, taken: false },
+    { x: 3440, y: 290, width: 24, height: 24, taken: false },
+    { x: 3635, y: 230, width: 24, height: 24, taken: false },
+    { x: 3935, y: 302, width: 24, height: 24, taken: false },
+    { x: 4025, y: 302, width: 24, height: 24, taken: false },
+  ];
+  const arenaCoins: Coin[] = [
+    { x: 330, y: 310, width: 24, height: 24, taken: false },
+    { x: 735, y: 268, width: 24, height: 24, taken: false },
+    { x: 1180, y: 310, width: 24, height: 24, taken: false },
+  ];
+  const levelCoins = (isFinalBossLevel ? arenaCoins : [...coinLayout, ...extraCoins, ...extensionCoins]).map((coin, index) => ({
     ...coin,
     y: Math.max(218, Math.min(412, coin.y + (((index + difficulty) % 3) - 1) * 8)),
     taken: false,
   }));
-  const levelLuckyBlocks = luckyBlockLayout.map((block, index) => ({
+  const arenaLuckyBlocks: Rect[] = [
+    { x: 760, y: 220, width: 34, height: 34 },
+  ];
+  const levelLuckyBlocks = (isFinalBossLevel ? arenaLuckyBlocks : [...luckyBlockLayout, { x: 3692, y: 214, width: 34, height: 34 }]).map((block, index) => ({
     ...block,
     y: Math.max(174, Math.min(288, block.y + (((difficulty + index) % 3) - 1) * 8)),
     used: false,
@@ -436,8 +517,8 @@ function createLevelMap(level: number): LevelMap {
     ...enemy,
     speed: enemy.speed + difficulty * 0.035 + (index % 2) * 0.08,
     defeated: false,
-  })).filter((enemy) => !isBossLevel || enemy.x < 2400);
-  const bonusEnemies = Array.from({ length: isBossLevel ? 2 : Math.min(5, Math.floor(difficulty / 6)) }, (_, index) => {
+  })).filter((enemy) => !(isBossLevel || isFinalBossLevel) || enemy.x < 2400);
+  const bonusEnemies = Array.from({ length: isBossLevel || isFinalBossLevel ? 2 : Math.min(5, Math.floor(difficulty / 6)) }, (_, index) => {
     const startX = 930 + index * 410;
 
     return {
@@ -452,31 +533,81 @@ function createLevelMap(level: number): LevelMap {
       defeated: false,
     } satisfies Enemy;
   });
+  const extensionEnemies: Enemy[] = [
+    {
+      x: 3375,
+      y: 426,
+      width: 38,
+      height: 42,
+      startX: 3315,
+      endX: 3665,
+      speed: 1.45 + difficulty * 0.03,
+      direction: 1,
+      defeated: false,
+    },
+    {
+      x: 3950,
+      y: 426,
+      width: 38,
+      height: 42,
+      startX: 3840,
+      endX: 4240,
+      speed: 1.65 + difficulty * 0.03,
+      direction: -1,
+      defeated: false,
+    },
+  ];
   const levelStairs = isBossLevel
     ? stairBlocks.map((stair, index) => ({
         ...stair,
         rows: Math.min(4, stair.rows + (difficulty + index) % 2),
       }))
     : [];
-  const levelPipes = pipes.map((pipe, index) => ({
+  const arenaPipes: Pipe[] = [
+    { x: 178, y: 400, width: 58, height: 68 },
+    { x: 1545, y: 400, width: 58, height: 68 },
+  ];
+  const levelPipes = (isFinalBossLevel ? arenaPipes : [...pipes, { x: 3720, y: 400, width: 58, height: 68 }]).map((pipe, index) => ({
     ...pipe,
     height: Math.min(92, pipe.height + ((difficulty + index) % 3) * 4),
     y: pipe.y - ((difficulty + index) % 3) * 4,
   }));
-  const boss: Boss | null = isBossLevel
+  const boss: Boss | null = isBossLevel || isFinalBossLevel
     ? {
-        x: 2745,
-        y: 376,
-        width: 122,
-        height: 92,
-        startX: 2645,
-        endX: 2990,
-        speed: 0,
+        kind: 'final',
+        x: isFinalBossLevel ? 1180 : 3905,
+        y: isFinalBossLevel ? GROUND_Y - 208 : 376,
+        width: isFinalBossLevel ? 270 : 122,
+        height: isFinalBossLevel ? 208 : 92,
+        startX: isFinalBossLevel ? 90 : 3805,
+        endX: isFinalBossLevel ? 1660 : 4170,
+        speed: isFinalBossLevel ? 4.1 : 0,
+        velocityY: 0,
+        onGround: true,
+        nextJumpAt: 0,
         direction: -1,
-        health: 10,
-        maxHealth: 10,
+        health: isFinalBossLevel ? 14 : 10,
+        maxHealth: isFinalBossLevel ? 14 : 10,
         hurtUntil: 0,
       }
+    : isMiniBossLevel
+      ? {
+          kind: 'mini',
+          x: 3960,
+          y: 374,
+          width: 128,
+          height: 94,
+          startX: 3840,
+          endX: 4140,
+          speed: 0.85,
+          velocityY: 0,
+          onGround: true,
+          nextJumpAt: 0,
+          direction: -1,
+          health: 5,
+          maxHealth: 5,
+          hurtUntil: 0,
+        }
     : null;
 
   return {
@@ -484,11 +615,11 @@ function createLevelMap(level: number): LevelMap {
     collisionPlatforms: buildCollisionPlatforms(levelPlatforms, levelStairs, levelLuckyBlocks),
     coins: levelCoins,
     luckyBlocks: levelLuckyBlocks,
-    enemies: [...levelEnemies, ...bonusEnemies],
+    enemies: isFinalBossLevel ? [] : [...levelEnemies, ...bonusEnemies, ...extensionEnemies],
     boss,
     pipes: levelPipes,
     stairBlocks: levelStairs,
-    flag,
+    flag: arenaFlag,
     theme,
     worldWidth,
   };
@@ -504,6 +635,31 @@ function copyEnemies(levelEnemies: Enemy[]) {
 
 function copyLuckyBlocks(levelLuckyBlocks: LuckyBlock[]) {
   return levelLuckyBlocks.map((block) => ({ ...block, used: false, bounce: 0 }));
+}
+
+function shouldSpawnHelper(level: number) {
+  if (level >= LAB_LEVEL_START) {
+    return false;
+  }
+
+  return ((level * 37 + 11) % 100) < 38;
+}
+
+function createHelper(level: number): Helper | null {
+  if (!shouldSpawnHelper(level)) {
+    return null;
+  }
+
+  return {
+    x: 174,
+    y: GROUND_Y - HELPER_HEIGHT,
+    width: HELPER_WIDTH,
+    height: HELPER_HEIGHT,
+    mounted: false,
+    leaving: false,
+    velocityX: 1.25,
+    facing: 1,
+  };
 }
 
 function loadGuestProgress(): GameProgress | null {
@@ -565,8 +721,11 @@ export function MarioGame({ userId }: MarioGameProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const keysRef = useRef({ left: false, right: false, jump: false, fire: false, down: false });
   const bossImageRef = useRef<HTMLImageElement | null>(null);
+  const finalBossImageRef = useRef<HTMLImageElement | null>(null);
+  const miniBossImageRef = useRef<HTMLImageElement | null>(null);
   const piraniaImageRef = useRef<HTMLImageElement | null>(null);
   const turtleImageRef = useRef<HTMLImageElement | null>(null);
+  const helperImageRef = useRef<HTMLImageElement | null>(null);
   const shopRequestRef = useRef<ShopItemId | null>(null);
   const saveTimeoutRef = useRef<number | null>(null);
   const progressRef = useRef<GameProgress>(createNewProgress());
@@ -683,6 +842,28 @@ export function MarioGame({ userId }: MarioGameProps) {
 
   useEffect(() => {
     const image = new Image();
+    image.src = '/BOWSER.png';
+    image.onload = () => {
+      finalBossImageRef.current = image;
+    };
+    image.onerror = () => {
+      finalBossImageRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const image = new Image();
+    image.src = '/croco.png';
+    image.onload = () => {
+      miniBossImageRef.current = image;
+    };
+    image.onerror = () => {
+      miniBossImageRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const image = new Image();
     image.src = '/pirani.png';
     image.onload = () => {
       piraniaImageRef.current = image;
@@ -700,6 +881,17 @@ export function MarioGame({ userId }: MarioGameProps) {
     };
     image.onerror = () => {
       turtleImageRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const image = new Image();
+    image.src = '/yoshi.png';
+    image.onload = () => {
+      helperImageRef.current = image;
+    };
+    image.onerror = () => {
+      helperImageRef.current = null;
     };
   }, []);
 
@@ -806,10 +998,15 @@ export function MarioGame({ userId }: MarioGameProps) {
     let prizeTexts: PrizeText[] = [];
     let fireballs: Fireball[] = [];
     let playerFireballs: PlayerFireball[] = [];
+    let turtleShells: TurtleShell[] = [];
     let axes: Axe[] = [];
+    let helper = createHelper(level);
     let nextBossFireAt = performance.now() + 1200;
     let nextBossAxeAt = performance.now() + 2100;
+    let miniBossBubbleShots = 0;
+    let bubblesDisabled = false;
     let nextPipeEnterAt = 0;
+    const turtleShellThrownByEnemy = new Set<number>();
     const piraniaActivationTicks = new Map<number, number>();
     let advancingLevel = false;
 
@@ -887,7 +1084,13 @@ export function MarioGame({ userId }: MarioGameProps) {
       cameraX = 0;
       fireballs = [];
       playerFireballs = [];
+      turtleShells = [];
       axes = [];
+      if (helper?.mounted) {
+        helper.mounted = false;
+        helper.x = player.x - 17;
+        helper.y = GROUND_Y - helper.height;
+      }
       speedBoostUntil = 0;
       jumpBoostUntil = 0;
       fireFlowerUntil = 0;
@@ -971,6 +1174,18 @@ export function MarioGame({ userId }: MarioGameProps) {
 
     function loseLife() {
       if (performance.now() < invincibleUntil || status !== 'playing') {
+        return;
+      }
+
+      if (helper?.mounted) {
+        helper.mounted = false;
+        helper.leaving = true;
+        helper.velocityX = -6.2;
+        helper.facing = -1;
+        helper.x = player.x - 18;
+        helper.y = Math.min(GROUND_Y - helper.height, player.y + player.height - helper.height + 10);
+        invincibleUntil = performance.now() + 1300;
+        showGameMessage('Yoshi saved you', player.x + player.width / 2, player.y - 8);
         return;
       }
 
@@ -1216,8 +1431,9 @@ export function MarioGame({ userId }: MarioGameProps) {
 
       const keys = keysRef.current;
       const now = performance.now();
-      const moveSpeed = now < speedBoostUntil ? MOVE_SPEED * 1.45 : MOVE_SPEED;
-      const jumpForce = now < jumpBoostUntil ? JUMP_FORCE * 1.18 : JUMP_FORCE;
+      const isRidingHelper = Boolean(helper?.mounted);
+      const moveSpeed = (now < speedBoostUntil ? MOVE_SPEED * 1.45 : MOVE_SPEED) * (isRidingHelper ? 1.18 : 1);
+      const jumpForce = (now < jumpBoostUntil ? JUMP_FORCE * 1.18 : JUMP_FORCE) * (isRidingHelper ? 1.08 : 1);
       player.velocityX = 0;
 
       if (keys.left) {
@@ -1277,6 +1493,37 @@ export function MarioGame({ userId }: MarioGameProps) {
         }
       }
 
+      if (helper && !helper.mounted && !helper.leaving && intersects(player, helper)) {
+        const playerWasAbove = player.velocityY >= 0 && player.y + player.height - player.velocityY <= helper.y + 72;
+        const canClimbOn = player.onGround && Math.abs(player.x + player.width / 2 - (helper.x + helper.width / 2)) < 104;
+
+        if (playerWasAbove || canClimbOn) {
+          helper.mounted = true;
+          helper.facing = player.facing;
+          player.velocityY = 0;
+          player.onGround = true;
+          player.y = helper.y + HELPER_SEAT_OFFSET_Y - player.height;
+          showGameMessage('Yoshi joined', player.x + player.width / 2, player.y - 8);
+        }
+      }
+
+      if (helper?.mounted) {
+        helper.facing = player.facing;
+        const seatX = helper.facing === 1 ? HELPER_SEAT_OFFSET_X : helper.width - HELPER_SEAT_OFFSET_X;
+
+        helper.x = player.x + player.width / 2 - seatX;
+        const helperGround = getGroundUnder(helper);
+
+        if (helperGround && player.velocityY >= 0) {
+          helper.y = helperGround.y - helper.height;
+          player.y = helper.y + HELPER_SEAT_OFFSET_Y - player.height;
+          player.velocityY = 0;
+          player.onGround = true;
+        } else {
+          helper.y = player.y + player.height - HELPER_SEAT_OFFSET_Y;
+        }
+      }
+
       if (player.y > CANVAS_HEIGHT + 80) {
         loseLife();
       }
@@ -1284,6 +1531,42 @@ export function MarioGame({ userId }: MarioGameProps) {
 
     function updateWorld() {
       updatePiraniaActivation();
+
+      if (helper?.leaving) {
+        helper.x += helper.velocityX;
+        helper.y = Math.min(GROUND_Y - helper.height, helper.y + 2);
+
+        if (helper.x + helper.width < -40) {
+          helper = null;
+        }
+      } else if (helper && !helper.mounted) {
+        const currentGround = getGroundUnder(helper);
+        const nextX = helper.x + helper.velocityX;
+        const nextHelperRect: Rect = {
+          x: nextX,
+          y: helper.y,
+          width: helper.width,
+          height: helper.height,
+        };
+        const frontProbeX = helper.velocityX > 0 ? nextX + helper.width + 10 : nextX - 10;
+        const groundAhead = getGroundAt(frontProbeX);
+        const blockedByPlatform = levelMap.collisionPlatforms.some((platform) => {
+          if (platform.y === currentGround?.y) {
+            return false;
+          }
+
+          return intersects(nextHelperRect, platform);
+        });
+
+        if (!currentGround || !groundAhead || blockedByPlatform) {
+          helper.velocityX *= -1;
+          helper.facing = helper.velocityX > 0 ? 1 : -1;
+        } else {
+          helper.x = nextX;
+          helper.y = currentGround.y - helper.height;
+          helper.facing = helper.velocityX > 0 ? 1 : -1;
+        }
+      }
 
       for (const [pipeIndex, pipe] of levelMap.pipes.entries()) {
         if (!hasPirania(pipeIndex) || getPiraniaReveal(pipeIndex) < 0.55) {
@@ -1318,6 +1601,25 @@ export function MarioGame({ userId }: MarioGameProps) {
           enemy.direction = enemy.direction === 1 ? -1 : 1;
         }
 
+        if (isTurtle) {
+          const distanceToPlayer = Math.abs(player.x + player.width / 2 - (enemy.x + enemy.width / 2));
+
+          if (!turtleShellThrownByEnemy.has(enemyIndex) && distanceToPlayer < 520) {
+            const shellDirection = player.x + player.width / 2 < enemy.x + enemy.width / 2 ? -1 : 1;
+
+            enemy.direction = shellDirection;
+            turtleShells.push({
+              x: shellDirection === 1 ? enemy.x + enemy.width - 4 : enemy.x - 44,
+              y: enemy.y + enemy.height - 36,
+              width: 46,
+              height: 34,
+              velocityX: shellDirection * 4.8,
+              spin: animationTick,
+            });
+            turtleShellThrownByEnemy.add(enemyIndex);
+          }
+        }
+
         if (intersects(player, enemy)) {
           const playerWasAbove = player.velocityY > 0 && player.y + player.height - player.velocityY <= enemy.y + 10;
 
@@ -1337,16 +1639,106 @@ export function MarioGame({ userId }: MarioGameProps) {
         }
       }
 
-      if (boss && boss.health > 0) {
-        boss.x += boss.speed * boss.direction;
+      const nextTurtleShells: TurtleShell[] = [];
+      let playerHitByShell = false;
 
-        if (boss.x < boss.startX || boss.x + boss.width > boss.endX) {
-          boss.direction = boss.direction === 1 ? -1 : 1;
+      for (const shell of turtleShells) {
+        const nextShell = {
+          ...shell,
+          x: shell.x + shell.velocityX,
+          spin: shell.spin + 1,
+        };
+        const hitPlatform = levelMap.collisionPlatforms.some((platform) => intersects(nextShell, platform));
+        const outsideWorld = nextShell.x + nextShell.width < 0 || nextShell.x > levelMap.worldWidth;
+
+        if (hitPlatform || outsideWorld) {
+          continue;
         }
 
+        if (intersects(player, nextShell)) {
+          loseLife();
+          playerHitByShell = true;
+          break;
+        }
+
+        nextTurtleShells.push(nextShell);
+      }
+
+      turtleShells = playerHitByShell ? [] : nextTurtleShells;
+
+      if (boss && boss.health > 0) {
         const now = performance.now();
 
-        if (now >= nextBossFireAt) {
+        if (level === FINAL_BOSS_LEVEL) {
+          const bossCenterX = boss.x + boss.width / 2;
+          const playerCenterX = player.x + player.width / 2;
+          const distanceToPlayer = playerCenterX - bossCenterX;
+
+          boss.direction = distanceToPlayer < 0 ? -1 : 1;
+
+          if (Math.abs(distanceToPlayer) > 70) {
+            boss.x += boss.speed * boss.direction * (boss.onGround ? 1 : 2.35);
+          }
+
+          boss.x = Math.max(boss.startX, Math.min(boss.endX - boss.width, boss.x));
+          boss.velocityY += GRAVITY * 0.72;
+          boss.y += boss.velocityY;
+
+          if (boss.y + boss.height >= GROUND_Y) {
+            boss.y = GROUND_Y - boss.height;
+            boss.velocityY = 0;
+            boss.onGround = true;
+          }
+
+          if (boss.onGround && now >= boss.nextJumpAt) {
+            boss.velocityY = -18.8;
+            boss.onGround = false;
+            boss.nextJumpAt = now + 10000;
+          }
+        } else {
+          boss.x += boss.speed * boss.direction;
+
+          if (boss.x < boss.startX || boss.x + boss.width > boss.endX) {
+            boss.direction = boss.direction === 1 ? -1 : 1;
+          }
+        }
+
+        if (boss.kind === 'mini' && !bubblesDisabled && now >= nextBossFireAt) {
+          const bubbleSize = 42;
+          const direction = player.x + player.width / 2 < boss.x + boss.width / 2 ? -1 : 1;
+          const mouthX = direction === -1 ? boss.x + 18 : boss.x + boss.width - 12;
+          const mouthY = boss.y + 34;
+          const startX = direction === -1 ? mouthX - bubbleSize : mouthX;
+          const startY = mouthY - bubbleSize / 2;
+          const launchX = startX + bubbleSize / 2;
+          const launchY = startY + bubbleSize / 2;
+          const targetX = player.x + player.width / 2;
+          const targetY = player.y + player.height / 2;
+          const distanceX = targetX - launchX;
+          const distanceY = targetY - launchY;
+          const distance = Math.max(1, Math.hypot(distanceX, distanceY));
+          const speed = 3.1;
+
+          boss.direction = direction;
+          fireballs.push({
+            x: startX,
+            y: startY,
+            width: bubbleSize,
+            height: bubbleSize,
+            velocityX: (distanceX / distance) * speed,
+            velocityY: (distanceY / distance) * speed,
+            spin: animationTick,
+            kind: 'bubble',
+          });
+          miniBossBubbleShots += 1;
+
+          if (miniBossBubbleShots >= 3) {
+            miniBossBubbleShots = 0;
+            nextBossFireAt = now + 10000;
+          } else {
+            nextBossFireAt = now + 420;
+          }
+        } else if (boss.kind === 'final' && now >= nextBossFireAt) {
           const fireballWidth = 34;
           const fireballHeight = 26;
           const direction = player.x + player.width / 2 < boss.x + boss.width / 2 ? -1 : 1;
@@ -1372,11 +1764,12 @@ export function MarioGame({ userId }: MarioGameProps) {
             velocityX: (distanceX / distance) * speed,
             velocityY: (distanceY / distance) * speed,
             spin: animationTick,
+            kind: 'fire',
           });
           nextBossFireAt = now + 1450;
         }
 
-        if (now >= nextBossAxeAt) {
+        if (boss.kind === 'final' && now >= nextBossAxeAt) {
           const axeWidth = 30;
           const axeHeight = 30;
           const direction = player.x + player.width / 2 < boss.x + boss.width / 2 ? -1 : 1;
@@ -1569,6 +1962,20 @@ export function MarioGame({ userId }: MarioGameProps) {
         const y = fireball.y;
         const pulse = Math.floor(fireball.spin / 4) % 2;
 
+        if (fireball.kind === 'bubble') {
+          context.fillStyle = 'rgba(75, 176, 220, 0.2)';
+          drawPixelRect(context, x + 4, y + fireball.height - 5, fireball.width - 8, 5);
+          context.fillStyle = 'rgba(168, 235, 255, 0.78)';
+          drawPixelRect(context, x + 8, y + 5 + pulse, fireball.width - 16, fireball.height - 12);
+          drawPixelRect(context, x + 4, y + 13 + pulse, fireball.width - 8, fireball.height - 28);
+          context.fillStyle = 'rgba(255, 255, 255, 0.86)';
+          drawPixelRect(context, x + 13, y + 10 + pulse, 10, 7);
+          drawPixelRect(context, x + 24, y + 20, 5, 5);
+          context.fillStyle = 'rgba(42, 145, 190, 0.46)';
+          drawPixelRect(context, x + 7, y + fireball.height - 13, fireball.width - 14, 5);
+          continue;
+        }
+
         context.fillStyle = 'rgba(44, 13, 8, 0.24)';
         drawPixelRect(context, x + 4, y + 22, 28, 5);
         context.fillStyle = '#b81f1a';
@@ -1640,7 +2047,83 @@ export function MarioGame({ userId }: MarioGameProps) {
     }
 
     function drawBackground() {
-      if (level === TOTAL_LEVELS) {
+      if (level >= LAB_LEVEL_START) {
+        context.fillStyle = levelMap.theme.sky;
+        context.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+        context.fillStyle = levelMap.theme.horizon;
+        context.fillRect(0, 250, CANVAS_WIDTH, 218);
+
+        context.fillStyle = '#071015';
+        drawPixelRect(context, 0, 0, CANVAS_WIDTH, 46);
+        context.fillStyle = '#263842';
+        for (let gridX = -Math.floor(cameraX * 0.05) % 96; gridX < CANVAS_WIDTH; gridX += 96) {
+          drawPixelRect(context, gridX, 46, 3, 282);
+        }
+        for (let gridY = 72; gridY < 330; gridY += 64) {
+          drawPixelRect(context, 0, gridY, CANVAS_WIDTH, 3);
+        }
+
+        context.fillStyle = '#1b2a31';
+        for (let panelX = -120 - cameraX * 0.08; panelX < CANVAS_WIDTH + 180; panelX += 180) {
+          drawPixelRect(context, panelX, 58, 138, 92);
+          context.fillStyle = '#2a3d46';
+          drawPixelRect(context, panelX + 10, 68, 118, 8);
+          drawPixelRect(context, panelX + 10, 132, 118, 6);
+          context.fillStyle = '#74d9e9';
+          drawPixelRect(context, panelX + 22, 88, 26, 18);
+          drawPixelRect(context, panelX + 68, 88, 42, 18);
+          context.fillStyle = '#1b2a31';
+        }
+
+        for (let screenX = 40 - cameraX * 0.12; screenX < CANVAS_WIDTH + 220; screenX += 310) {
+          context.fillStyle = '#091116';
+          drawPixelRect(context, screenX, 166, 126, 58);
+          context.fillStyle = '#39e3b2';
+          drawPixelRect(context, screenX + 10, 176, 36, 8);
+          drawPixelRect(context, screenX + 10, 194, 76, 6);
+          drawPixelRect(context, screenX + 10, 210, 52, 5);
+          context.fillStyle = '#e95368';
+          drawPixelRect(context, screenX + 98, 178, 14, 14);
+        }
+
+        for (let wireX = -80 - cameraX * 0.18; wireX < CANVAS_WIDTH + 220; wireX += 260) {
+          context.fillStyle = '#4b6672';
+          drawPixelRect(context, wireX, 196, 160, 8);
+          drawPixelRect(context, wireX + 152, 196, 8, 84);
+          context.fillStyle = '#f6d64e';
+          drawPixelRect(context, wireX + 146, 272, 20, 20);
+          context.fillStyle = '#fff4a8';
+          drawPixelRect(context, wireX + 152, 278, 8, 8);
+        }
+
+        context.fillStyle = '#233842';
+        for (let machineX = 180 - cameraX * 0.35; machineX < levelMap.worldWidth - cameraX; machineX += 560) {
+          drawPixelRect(context, machineX, 348, 118, 120);
+          context.fillStyle = '#5e7a86';
+          drawPixelRect(context, machineX + 12, 362, 94, 12);
+          drawPixelRect(context, machineX + 16, 408, 28, 26);
+          context.fillStyle = '#77e2f2';
+          drawPixelRect(context, machineX + 58, 398, 34, 48);
+          context.fillStyle = '#233842';
+        }
+
+        for (let tankX = 430 - cameraX * 0.32; tankX < levelMap.worldWidth - cameraX; tankX += 760) {
+          context.fillStyle = '#12212a';
+          drawPixelRect(context, tankX, 312, 70, 156);
+          context.fillStyle = 'rgba(111, 239, 204, 0.62)';
+          drawPixelRect(context, tankX + 10, 328, 50, 118);
+          context.fillStyle = '#e8fff8';
+          drawPixelRect(context, tankX + 22, 342, 10, 8);
+          drawPixelRect(context, tankX + 40, 398, 8, 8);
+          context.fillStyle = '#425965';
+          drawPixelRect(context, tankX - 6, 306, 82, 10);
+          drawPixelRect(context, tankX - 6, 448, 82, 12);
+        }
+
+        return;
+      }
+
+      if (level === BOWSER_LEVEL) {
         context.fillStyle = levelMap.theme.sky;
         context.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
         context.fillStyle = levelMap.theme.horizon;
@@ -1772,9 +2255,35 @@ export function MarioGame({ userId }: MarioGameProps) {
     }
 
     function drawMapDecorations() {
-      const isCaveLevel = level === TOTAL_LEVELS;
+      const isLabLevel = level >= LAB_LEVEL_START;
+      const isCaveLevel = level === BOWSER_LEVEL;
 
-      if (isCaveLevel) {
+      if (isLabLevel) {
+        context.fillStyle = '#5f7884';
+        for (const platform of levelMap.platforms) {
+          if (platform.y !== GROUND_Y) {
+            continue;
+          }
+
+          for (let ventX = platform.x + 70 - cameraX; ventX < platform.x + platform.width - 60 - cameraX; ventX += 220) {
+            drawPixelRect(context, ventX, 444, 72, 16);
+            context.fillStyle = '#102029';
+            for (let slitX = ventX + 8; slitX < ventX + 66; slitX += 12) {
+              drawPixelRect(context, slitX, 448, 6, 8);
+            }
+            context.fillStyle = '#5f7884';
+          }
+        }
+
+        context.fillStyle = '#74d9e9';
+        for (let tubeX = 320 - cameraX; tubeX < levelMap.worldWidth - cameraX; tubeX += 620) {
+          drawPixelRect(context, tubeX, 430, 24, 38);
+          drawPixelRect(context, tubeX + 18, 418, 14, 50);
+          context.fillStyle = 'rgba(116, 217, 233, 0.3)';
+          drawPixelRect(context, tubeX - 8, 410, 54, 58);
+          context.fillStyle = '#74d9e9';
+        }
+      } else if (isCaveLevel) {
         context.fillStyle = '#5c6070';
         for (const platform of levelMap.platforms) {
           if (platform.y !== GROUND_Y) {
@@ -1813,11 +2322,11 @@ export function MarioGame({ userId }: MarioGameProps) {
         const x = stair.x - cameraX;
 
         for (let row = 0; row < stair.rows; row += 1) {
-          context.fillStyle = isCaveLevel ? '#4d5160' : '#8d4f25';
+          context.fillStyle = isLabLevel ? '#384854' : isCaveLevel ? '#4d5160' : '#8d4f25';
           drawPixelRect(context, x, stair.y - row * 28, 34, 28);
-          context.fillStyle = isCaveLevel ? '#73798a' : '#c67a38';
+          context.fillStyle = isLabLevel ? '#83dce8' : isCaveLevel ? '#73798a' : '#c67a38';
           drawPixelRect(context, x + 3, stair.y + 3 - row * 28, 28, 5);
-          context.fillStyle = isCaveLevel ? '#2f3240' : '#603319';
+          context.fillStyle = isLabLevel ? '#15242c' : isCaveLevel ? '#2f3240' : '#603319';
           drawPixelRect(context, x + 4, stair.y + 18 - row * 28, 22, 4);
         }
       }
@@ -1860,22 +2369,22 @@ export function MarioGame({ userId }: MarioGameProps) {
           drawPixelRect(context, x + pipe.width / 2 - 4, pipe.y - 8, 8, 5);
         }
 
-        context.fillStyle = isCaveLevel ? '#2a4b57' : '#145c42';
+        context.fillStyle = isLabLevel ? '#3f5662' : isCaveLevel ? '#2a4b57' : '#145c42';
         drawPixelRect(context, x - 5, pipe.y - 10, pipe.width + 10, 16);
-        context.fillStyle = isCaveLevel ? '#172b34' : '#0b3327';
+        context.fillStyle = isLabLevel ? '#101d24' : isCaveLevel ? '#172b34' : '#0b3327';
         drawPixelRect(context, x - 8, pipe.y - 13, pipe.width + 16, 4);
-        context.fillStyle = isCaveLevel ? '#3c7484' : '#23945f';
+        context.fillStyle = isLabLevel ? '#6e8792' : isCaveLevel ? '#3c7484' : '#23945f';
         drawPixelRect(context, x, pipe.y, pipe.width, pipe.height);
-        context.fillStyle = isCaveLevel ? '#69a7b7' : '#35c27a';
+        context.fillStyle = isLabLevel ? '#9fdce6' : isCaveLevel ? '#69a7b7' : '#35c27a';
         drawPixelRect(context, x + 7, pipe.y + 4, 10, pipe.height - 8);
         drawPixelRect(context, x + 20, pipe.y + 12, 5, pipe.height - 20);
-        context.fillStyle = isCaveLevel ? '#234c58' : '#0f4432';
+        context.fillStyle = isLabLevel ? '#304550' : isCaveLevel ? '#234c58' : '#0f4432';
         drawPixelRect(context, x + pipe.width - 10, pipe.y + 4, 6, pipe.height - 8);
-        context.fillStyle = isCaveLevel ? '#142c35' : '#083325';
+        context.fillStyle = isLabLevel ? '#15252d' : isCaveLevel ? '#142c35' : '#083325';
         drawPixelRect(context, x - 5, pipe.y + 4, pipe.width + 10, 4);
       }
 
-      if (!isCaveLevel) {
+      if (!isCaveLevel && !isLabLevel) {
         const bushPositions = [170, 1035, 1265, 1985, 2220, 2740, 2995];
         for (const bushX of bushPositions) {
           const x = bushX - cameraX;
@@ -1888,9 +2397,22 @@ export function MarioGame({ userId }: MarioGameProps) {
         }
       }
 
-      const stonePositions = [665, 1184, 1818, 2415, 3088];
-      for (const stoneX of stonePositions) {
-        const x = stoneX - cameraX;
+      const smallPropPositions = [665, 1184, 1818, 2415, 3088];
+      for (const propX of smallPropPositions) {
+        const x = propX - cameraX;
+
+        if (isLabLevel) {
+          context.fillStyle = '#1d3039';
+          drawPixelRect(context, x - 4, 432, 42, 36);
+          context.fillStyle = '#6be4f0';
+          drawPixelRect(context, x + 3, 438, 16, 10);
+          context.fillStyle = '#f6d64e';
+          drawPixelRect(context, x + 25, 440, 6, 6);
+          context.fillStyle = '#0b171d';
+          drawPixelRect(context, x + 4, 456, 28, 5);
+          continue;
+        }
+
         context.fillStyle = '#8a8f96';
         drawPixelRect(context, x, 448, 28, 20);
         context.fillStyle = '#c3c8cf';
@@ -1899,7 +2421,7 @@ export function MarioGame({ userId }: MarioGameProps) {
         drawPixelRect(context, x + 18, 460, 7, 4);
       }
 
-      if (!isCaveLevel) {
+      if (!isCaveLevel && !isLabLevel) {
         const bridgeX = 2446 - cameraX;
         context.fillStyle = '#70421f';
         drawPixelRect(context, bridgeX, 438, 132, 10);
@@ -1912,6 +2434,23 @@ export function MarioGame({ userId }: MarioGameProps) {
       }
 
       const castleX = levelMap.flag.x + 40 - cameraX;
+      if (isLabLevel) {
+        context.fillStyle = '#16222a';
+        drawPixelRect(context, castleX, 350, 104, 118);
+        context.fillStyle = '#3d5965';
+        drawPixelRect(context, castleX - 18, 386, 28, 82);
+        drawPixelRect(context, castleX + 92, 386, 28, 82);
+        drawPixelRect(context, castleX + 10, 332, 84, 28);
+        context.fillStyle = '#78e0ef';
+        drawPixelRect(context, castleX + 20, 374, 18, 30);
+        drawPixelRect(context, castleX + 64, 374, 18, 30);
+        context.fillStyle = '#f6d64e';
+        drawPixelRect(context, castleX + 44, 344, 16, 16);
+        context.fillStyle = '#071015';
+        drawPixelRect(context, castleX + 30, 416, 44, 52);
+        return;
+      }
+
       if (isCaveLevel) {
         context.fillStyle = '#171820';
         drawPixelRect(context, castleX, 356, 86, 112);
@@ -1950,36 +2489,65 @@ export function MarioGame({ userId }: MarioGameProps) {
     }
 
     function drawPlatforms() {
+      const isLabLevel = level >= LAB_LEVEL_START;
+
       for (const platform of levelMap.platforms) {
         const x = platform.x - cameraX;
+        const isGround = platform.color === levelMap.theme.ground;
+
+        if (isLabLevel && !isGround) {
+          context.fillStyle = '#263844';
+          drawPixelRect(context, x, platform.y, platform.width, 22);
+          context.fillStyle = '#8fb8c4';
+          drawPixelRect(context, x, platform.y, platform.width, 8);
+          context.fillStyle = '#5fdcec';
+          drawPixelRect(context, x + 8, platform.y + 9, platform.width - 16, 4);
+          context.fillStyle = '#b8ccd2';
+          for (let boltX = x + 18; boltX < x + platform.width - 12; boltX += 36) {
+            drawPixelRect(context, boltX, platform.y + 3, 6, 3);
+          }
+          continue;
+        }
 
         context.fillStyle = platform.color;
         drawPixelRect(context, x, platform.y, platform.width, platform.height);
-        context.fillStyle = platform.color === levelMap.theme.ground ? levelMap.theme.groundTop : '#d4893e';
+        context.fillStyle = isGround ? levelMap.theme.groundTop : isLabLevel ? '#8d9ca4' : '#d4893e';
         drawPixelRect(context, x, platform.y, platform.width, 12);
 
-        context.fillStyle = platform.color === levelMap.theme.ground ? '#286829' : '#7e421d';
+        context.fillStyle = isGround ? (isLabLevel ? '#17252d' : '#286829') : isLabLevel ? '#24313a' : '#7e421d';
         for (let blockX = x; blockX < x + platform.width; blockX += 42) {
-          drawPixelRect(context, blockX + 5, platform.y + 20, 24, 5);
+          drawPixelRect(context, blockX + 5, platform.y + 20, 24, isLabLevel ? 6 : 5);
         }
 
-        if (platform.color === levelMap.theme.ground) {
-          context.fillStyle = '#2b7130';
+        if (isGround) {
+          context.fillStyle = isLabLevel ? '#4fd6e8' : '#2b7130';
           for (let tileX = x + 16; tileX < x + platform.width; tileX += 54) {
             drawPixelRect(context, tileX, platform.y + 34, 18, 5);
             drawPixelRect(context, tileX + 24, platform.y + 52, 12, 4);
           }
         } else {
-          context.fillStyle = '#6f391b';
+          context.fillStyle = isLabLevel ? '#101a20' : '#6f391b';
           for (let tileX = x + 8; tileX < x + platform.width; tileX += 32) {
-            drawPixelRect(context, tileX, platform.y + 8, 18, 3);
-            drawPixelRect(context, tileX + 8, platform.y + 19, 18, 3);
+            if (isLabLevel) {
+              drawPixelRect(context, tileX, platform.y + 9, 10, 4);
+              drawPixelRect(context, tileX + 17, platform.y + 18, 8, 8);
+            } else {
+              drawPixelRect(context, tileX, platform.y + 8, 18, 3);
+              drawPixelRect(context, tileX + 8, platform.y + 19, 18, 3);
+            }
+          }
+
+          if (isLabLevel) {
+            context.fillStyle = '#60727b';
+            drawPixelRect(context, x, platform.y + platform.height - 6, platform.width, 6);
           }
         }
       }
     }
 
     function drawLuckyBlocks() {
+      const isLabLevel = level >= LAB_LEVEL_START;
+
       for (const block of luckyBlocks) {
         const x = block.x - cameraX;
         const y = block.y - block.bounce;
@@ -2001,15 +2569,15 @@ export function MarioGame({ userId }: MarioGameProps) {
 
         const shine = Math.floor(animationTick / 14 + block.x * 0.02) % 2;
 
-        context.fillStyle = '#cc7b19';
+        context.fillStyle = isLabLevel ? '#22333d' : '#cc7b19';
         drawPixelRect(context, x, y, block.width, block.height);
-        context.fillStyle = '#f2b84b';
+        context.fillStyle = isLabLevel ? '#48606c' : '#f2b84b';
         drawPixelRect(context, x + 3, y + 3, block.width - 6, block.height - 6);
-        context.fillStyle = shine === 0 ? '#ffe38a' : '#ffd45a';
+        context.fillStyle = isLabLevel ? (shine === 0 ? '#97f3ff' : '#5edeea') : shine === 0 ? '#ffe38a' : '#ffd45a';
         drawPixelRect(context, x + 7, y + 6, 8, 5);
         drawPixelRect(context, x + 20, y + 6, 7, 5);
         drawPixelRect(context, x + 7, y + 22, 20, 5);
-        context.fillStyle = '#8f4f11';
+        context.fillStyle = isLabLevel ? '#13242c' : '#8f4f11';
         drawPixelRect(context, x + 13, y + 12, 8, 5);
         drawPixelRect(context, x + 16, y + 17, 5, 6);
         drawPixelRect(context, x + 16, y + 25, 5, 4);
@@ -2050,6 +2618,28 @@ export function MarioGame({ userId }: MarioGameProps) {
       }
 
       context.textAlign = 'start';
+    }
+
+    function drawTurtleShells() {
+      for (const shell of turtleShells) {
+        const x = shell.x - cameraX;
+        const y = shell.y;
+        const spinFrame = Math.floor(shell.spin / 4) % 4;
+        const stripeX = x + 8 + spinFrame * 6;
+
+        context.fillStyle = 'rgba(34, 30, 24, 0.22)';
+        drawPixelRect(context, x + 3, y + shell.height - 4, shell.width - 6, 5);
+        context.fillStyle = '#0f7f31';
+        drawPixelRect(context, x + 3, y + 10, shell.width - 8, 17);
+        drawPixelRect(context, x + 10, y + 4, shell.width - 20, 28);
+        context.fillStyle = '#24b947';
+        drawPixelRect(context, x + 10, y + 12, shell.width - 20, 7);
+        drawPixelRect(context, x + 14, y + 22, shell.width - 28, 5);
+        context.fillStyle = '#f3b342';
+        drawPixelRect(context, stripeX, y + 5, 6, 26);
+        context.fillStyle = '#ffffff';
+        drawPixelRect(context, x + shell.width - 13, y + 13, 6, 6);
+      }
     }
 
     function drawEnemies() {
@@ -2167,11 +2757,64 @@ export function MarioGame({ userId }: MarioGameProps) {
       const y = currentBoss.y;
       const step = Math.floor(animationTick / 12) % 2;
       const isHurt = performance.now() < currentBoss.hurtUntil && Math.floor(animationTick / 4) % 2 === 0;
-      const bossImage = bossImageRef.current;
+      const bossImage = level === FINAL_BOSS_LEVEL ? finalBossImageRef.current : bossImageRef.current;
+
+      if (currentBoss.kind === 'mini') {
+        const miniBossImage = miniBossImageRef.current;
+
+        context.fillStyle = 'rgba(34, 30, 24, 0.24)';
+        drawPixelRect(context, x + 14, y + currentBoss.height - 4, currentBoss.width - 26, 7);
+
+        if (miniBossImage) {
+          context.save();
+          context.globalAlpha = isHurt ? 0.62 : 1;
+          context.translate(x + currentBoss.width / 2, y + currentBoss.height / 2);
+          context.scale(currentBoss.direction === 1 ? -1 : 1, 1);
+          context.drawImage(
+            miniBossImage,
+            -currentBoss.width / 2 - 8,
+            -currentBoss.height / 2 - 10 + step,
+            currentBoss.width + 18,
+            currentBoss.height + 18,
+          );
+          context.restore();
+        } else {
+          const body = isHurt ? '#71d669' : '#269a4a';
+          context.fillStyle = '#17331f';
+          drawPixelRect(context, x + 10, y + 26 + step, 82, 44);
+          drawPixelRect(context, x + 66, y + 12 + step, 54, 38);
+          context.fillStyle = body;
+          drawPixelRect(context, x + 16, y + 22 + step, 76, 42);
+          drawPixelRect(context, x + 68, y + 10 + step, 44, 34);
+          context.fillStyle = '#f4efe0';
+          drawPixelRect(context, x + 75, y + 18 + step, 12, 9);
+          drawPixelRect(context, x + 96, y + 18 + step, 12, 9);
+          context.fillStyle = '#101010';
+          drawPixelRect(context, x + 80, y + 20 + step, 4, 5);
+          drawPixelRect(context, x + 99, y + 20 + step, 4, 5);
+          context.fillStyle = '#d7f9ff';
+          drawPixelRect(context, x + 2, y + 38 + step, 18, 18);
+        }
+
+        context.fillStyle = '#24130f';
+        drawPixelRect(context, 318, 20, 324, 22);
+        context.fillStyle = '#47c86b';
+        drawPixelRect(context, 322, 24, (316 * currentBoss.health) / currentBoss.maxHealth, 14);
+        context.fillStyle = '#ffffff';
+        context.font = '700 14px Inter, sans-serif';
+        context.fillText('CROCOJABER', 430, 36);
+        return;
+      }
 
       if (bossImage) {
         context.globalAlpha = isHurt ? 0.65 : 1;
-        context.drawImage(bossImage, Math.round(x - 30), Math.round(y - 20), 174, 124);
+        context.drawImage(
+          bossImage,
+          Math.round(x - (level === FINAL_BOSS_LEVEL ? 70 : 30)),
+          Math.round(y - (level === FINAL_BOSS_LEVEL ? 65 : 20)),
+          level === FINAL_BOSS_LEVEL ? 380 : 174,
+          level === FINAL_BOSS_LEVEL ? 292 : 124,
+        );
         context.globalAlpha = 1;
         context.fillStyle = '#24130f';
         drawPixelRect(context, 318, 20, 324, 22);
@@ -2498,13 +3141,63 @@ export function MarioGame({ userId }: MarioGameProps) {
       drawPixelRect(context, x + 18, levelMap.flag.y + 44, 32, 16);
     }
 
+    function drawHelper() {
+      if (!helper) {
+        return;
+      }
+
+      const helperImage = helperImageRef.current;
+      const x = helper.x - cameraX;
+      const y = helper.y + Math.round(Math.sin(animationTick / 13) * 1.5);
+
+      context.fillStyle = 'rgba(34, 30, 24, 0.24)';
+      drawPixelRect(context, x + 7, helper.y + helper.height - 5, helper.width - 12, 6);
+
+      if (helperImage) {
+        context.save();
+        context.translate(x + helper.width / 2, y + helper.height / 2);
+        context.scale(helper.facing === 1 ? 1 : -1, 1);
+        context.drawImage(
+          helperImage,
+          150,
+          70,
+          290,
+          300,
+          -helper.width / 2,
+          -helper.height / 2,
+          helper.width,
+          helper.height,
+        );
+        context.restore();
+        return;
+      }
+
+      context.fillStyle = '#173c27';
+      drawPixelRect(context, x + 6, y + 20, 44, 28);
+      drawPixelRect(context, x + 35, y + 9, 28, 24);
+      drawPixelRect(context, x + 50, y + 18, 15, 16);
+      context.fillStyle = '#2faa51';
+      drawPixelRect(context, x + 10, y + 18, 36, 27);
+      drawPixelRect(context, x + 36, y + 8, 23, 22);
+      context.fillStyle = '#f6eee0';
+      drawPixelRect(context, x + 18, y + 28, 22, 14);
+      drawPixelRect(context, x + 43, y + 15, 10, 8);
+      context.fillStyle = '#111111';
+      drawPixelRect(context, helper.facing === 1 ? x + 53 : x + 41, y + 15, 4, 4);
+      context.fillStyle = '#f05242';
+      drawPixelRect(context, x + 8, y + 44, 13, 8);
+      drawPixelRect(context, x + 40, y + 44, 13, 8);
+    }
+
     function drawPlayer() {
       const x = player.x - cameraX;
       const isRunning = Math.abs(player.velocityX) > 0.1 && player.onGround;
       const runFrame = isRunning ? Math.floor(animationTick / 5) % 4 : 0;
       const runCycle = [0, 1, 0, -1][runFrame];
       const bodyBob = isRunning && runFrame % 2 === 1 ? -2 : 0;
-      const y = player.y + bodyBob;
+      const ridingLift = helper?.mounted ? HELPER_PLAYER_DRAW_LIFT : 0;
+      const playerDrawY = player.y - ridingLift;
+      const y = playerDrawY + bodyBob;
       const faceSide = player.facing === 1 ? 1 : -1;
       const faceX = player.facing === 1 ? x + 11 : x + 7;
       const eyeX = player.facing === 1 ? x + 24 : x + 10;
@@ -2512,8 +3205,8 @@ export function MarioGame({ userId }: MarioGameProps) {
       const mustacheX = player.facing === 1 ? x + 18 : x + 10;
       const leftFootX = x - 3 - runCycle * 4;
       const rightFootX = x + 18 + runCycle * 4;
-      const leftFootY = player.y + 46 + (runCycle === 1 ? 2 : 0);
-      const rightFootY = player.y + 46 + (runCycle === -1 ? 2 : 0);
+      const leftFootY = playerDrawY + 46 + (runCycle === 1 ? 2 : 0);
+      const rightFootY = playerDrawY + 46 + (runCycle === -1 ? 2 : 0);
       const isShooting = performance.now() < playerShootUntil;
       const shootFrame = isShooting ? Math.floor((playerShootUntil - performance.now()) / 45) % 4 : 0;
       let leftArmX = x - 5 + runCycle * 3;
@@ -2671,9 +3364,11 @@ export function MarioGame({ userId }: MarioGameProps) {
       drawBoss();
       drawFireballs();
       drawPlayerFireballs();
+      drawTurtleShells();
       drawAxes();
       drawJumpEffects();
       drawPrizeTexts();
+      drawHelper();
       drawPlayer();
       context.fillStyle = 'rgba(23, 32, 51, 0.72)';
       drawPixelRect(context, 18, 18, 176, 36);
@@ -2704,9 +3399,46 @@ export function MarioGame({ userId }: MarioGameProps) {
     }
 
     function handleKeyDown(event: KeyboardEvent) {
+      if (event.code === 'KeyQ') {
+        bubblesDisabled = !bubblesDisabled;
+        fireballs = fireballs.filter((fireball) => fireball.kind !== 'bubble');
+        miniBossBubbleShots = 0;
+        nextBossFireAt = performance.now() + (bubblesDisabled ? 10000 : 800);
+        event.preventDefault();
+        return;
+      }
+
+      if (event.code === 'Digit0' || event.code === 'Numpad0') {
+        keysRef.current = { left: false, right: false, jump: false, fire: false, down: false };
+        progressRef.current = {
+          ...createNewProgress(),
+          level: 10,
+          coins: coinCount,
+          lives,
+        };
+        setSaveVersion((current) => current + 1);
+        setLevel(10);
+        event.preventDefault();
+        return;
+      }
+
+      if (event.code === 'Digit9' || event.code === 'Numpad9') {
+        keysRef.current = { left: false, right: false, jump: false, fire: false, down: false };
+        progressRef.current = {
+          ...createNewProgress(),
+          level: FINAL_BOSS_LEVEL,
+          coins: coinCount,
+          lives,
+        };
+        setSaveVersion((current) => current + 1);
+        setLevel(FINAL_BOSS_LEVEL);
+        event.preventDefault();
+        return;
+      }
+
       if (event.code === 'KeyB') {
         keysRef.current = { left: false, right: false, jump: false, fire: false, down: false };
-        setLevel(TOTAL_LEVELS);
+        setLevel(BOWSER_LEVEL);
         event.preventDefault();
         return;
       }
