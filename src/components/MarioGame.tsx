@@ -222,6 +222,10 @@ const HELPER_HEIGHT = 150;
 const HELPER_SEAT_OFFSET_X = 54;
 const HELPER_SEAT_OFFSET_Y = 91;
 const HELPER_PLAYER_DRAW_LIFT = 0;
+const PLAYER_HUD_Y = 64;
+const BOSS_HUD_X = 18;
+const BOSS_HUD_Y = 108;
+const BOSS_HUD_WIDTH = 330;
 
 const platforms: Platform[] = [
   { x: 0, y: GROUND_Y, width: 620, height: 72, color: '#3b8d3a' },
@@ -581,13 +585,13 @@ function createLevelMap(level: number): LevelMap {
         height: isFinalBossLevel ? 208 : 92,
         startX: isFinalBossLevel ? 90 : 3805,
         endX: isFinalBossLevel ? 1660 : 4170,
-        speed: isFinalBossLevel ? 4.1 : 0,
+        speed: isFinalBossLevel ? 3.1 : 0,
         velocityY: 0,
         onGround: true,
         nextJumpAt: 0,
         direction: -1,
-        health: isFinalBossLevel ? 14 : 10,
-        maxHealth: isFinalBossLevel ? 14 : 10,
+        health: isFinalBossLevel ? 8 : 10,
+        maxHealth: isFinalBossLevel ? 8 : 10,
         hurtUntil: 0,
       }
     : isMiniBossLevel
@@ -1677,7 +1681,7 @@ export function MarioGame({ userId }: MarioGameProps) {
           boss.direction = distanceToPlayer < 0 ? -1 : 1;
 
           if (Math.abs(distanceToPlayer) > 70) {
-            boss.x += boss.speed * boss.direction * (boss.onGround ? 1 : 2.35);
+            boss.x += boss.speed * boss.direction * (boss.onGround ? 1 : 1.65);
           }
 
           boss.x = Math.max(boss.startX, Math.min(boss.endX - boss.width, boss.x));
@@ -1691,7 +1695,7 @@ export function MarioGame({ userId }: MarioGameProps) {
           }
 
           if (boss.onGround && now >= boss.nextJumpAt) {
-            boss.velocityY = -18.8;
+            boss.velocityY = -16.4;
             boss.onGround = false;
             boss.nextJumpAt = now + 10000;
           }
@@ -1753,7 +1757,7 @@ export function MarioGame({ userId }: MarioGameProps) {
           const distanceX = targetX - launchX;
           const distanceY = targetY - launchY;
           const distance = Math.max(1, Math.hypot(distanceX, distanceY));
-          const speed = 4.4;
+          const speed = level === FINAL_BOSS_LEVEL ? 3.2 : 4.4;
 
           boss.direction = direction;
           fireballs.push({
@@ -1766,7 +1770,7 @@ export function MarioGame({ userId }: MarioGameProps) {
             spin: animationTick,
             kind: 'fire',
           });
-          nextBossFireAt = now + 1450;
+          nextBossFireAt = now + (level === FINAL_BOSS_LEVEL ? 2300 : 1450);
         }
 
         if (boss.kind === 'final' && now >= nextBossAxeAt) {
@@ -1795,12 +1799,13 @@ export function MarioGame({ userId }: MarioGameProps) {
         }
 
         if (intersects(player, boss)) {
-          const playerWasAbove = player.velocityY > 0 && player.y + player.height - player.velocityY <= boss.y + 18;
+          const stompWindow = level === FINAL_BOSS_LEVEL ? 58 : 18;
+          const playerWasAbove = player.velocityY > 0 && player.y + player.height - player.velocityY <= boss.y + stompWindow;
 
           if (playerWasAbove && performance.now() > boss.hurtUntil) {
-            boss.health -= 1;
-            boss.hurtUntil = performance.now() + 650;
-            player.velocityY = -12;
+            boss.health -= level === FINAL_BOSS_LEVEL ? 2 : 1;
+            boss.hurtUntil = performance.now() + (level === FINAL_BOSS_LEVEL ? 900 : 650);
+            player.velocityY = level === FINAL_BOSS_LEVEL ? -15 : -12;
 
             if (boss.health <= 0) {
               boss.y += 20;
@@ -1843,8 +1848,8 @@ export function MarioGame({ userId }: MarioGameProps) {
         }
 
         if (boss && boss.health > 0 && performance.now() > boss.hurtUntil && intersects(nextPlayerFireball, boss)) {
-          boss.health -= 1;
-          boss.hurtUntil = performance.now() + 650;
+          boss.health -= level === FINAL_BOSS_LEVEL ? 2 : 1;
+          boss.hurtUntil = performance.now() + (level === FINAL_BOSS_LEVEL ? 900 : 650);
 
           if (boss.health <= 0) {
             boss.y += 20;
@@ -2752,6 +2757,24 @@ export function MarioGame({ userId }: MarioGameProps) {
         return;
       }
 
+      function drawBossHealthBar(label: string, color: string) {
+        context.fillStyle = '#24130f';
+        drawPixelRect(context, BOSS_HUD_X, BOSS_HUD_Y, BOSS_HUD_WIDTH, 22);
+        context.fillStyle = color;
+        drawPixelRect(
+          context,
+          BOSS_HUD_X + 4,
+          BOSS_HUD_Y + 4,
+          ((BOSS_HUD_WIDTH - 8) * currentBoss.health) / currentBoss.maxHealth,
+          14,
+        );
+        context.fillStyle = '#ffffff';
+        context.font = '700 14px Inter, sans-serif';
+        context.textAlign = 'center';
+        context.fillText(label, BOSS_HUD_X + BOSS_HUD_WIDTH / 2, BOSS_HUD_Y + 16);
+        context.textAlign = 'start';
+      }
+
       const currentBoss = boss;
       const x = currentBoss.x - cameraX;
       const y = currentBoss.y;
@@ -2796,13 +2819,7 @@ export function MarioGame({ userId }: MarioGameProps) {
           drawPixelRect(context, x + 2, y + 38 + step, 18, 18);
         }
 
-        context.fillStyle = '#24130f';
-        drawPixelRect(context, 318, 20, 324, 22);
-        context.fillStyle = '#47c86b';
-        drawPixelRect(context, 322, 24, (316 * currentBoss.health) / currentBoss.maxHealth, 14);
-        context.fillStyle = '#ffffff';
-        context.font = '700 14px Inter, sans-serif';
-        context.fillText('CROCOJABER', 430, 36);
+        drawBossHealthBar('CROCOJABER', '#47c86b');
         return;
       }
 
@@ -2816,13 +2833,7 @@ export function MarioGame({ userId }: MarioGameProps) {
           level === FINAL_BOSS_LEVEL ? 292 : 124,
         );
         context.globalAlpha = 1;
-        context.fillStyle = '#24130f';
-        drawPixelRect(context, 318, 20, 324, 22);
-        context.fillStyle = '#e84a3a';
-        drawPixelRect(context, 322, 24, (316 * currentBoss.health) / currentBoss.maxHealth, 14);
-        context.fillStyle = '#ffffff';
-        context.font = '700 14px Inter, sans-serif';
-        context.fillText('BOSS', 456, 36);
+        drawBossHealthBar(level === FINAL_BOSS_LEVEL ? 'FINAL BOSS' : 'BOSS', '#e84a3a');
         return;
       }
 
@@ -2901,13 +2912,7 @@ export function MarioGame({ userId }: MarioGameProps) {
       context.fillStyle = '#ffffff';
       drawPixelRect(context, x + 14, y + 25, 1, 1);
 
-      context.fillStyle = '#24130f';
-      drawPixelRect(context, 318, 20, 324, 22);
-      context.fillStyle = '#e84a3a';
-      drawPixelRect(context, 322, 24, (316 * currentBoss.health) / currentBoss.maxHealth, 14);
-      context.fillStyle = '#ffffff';
-      context.font = '700 14px Inter, sans-serif';
-      context.fillText('BOWSER', 444, 36);
+      drawBossHealthBar('BOWSER', '#e84a3a');
       return;
 
       context.fillStyle = 'rgba(34, 30, 24, 0.28)';
@@ -3120,13 +3125,7 @@ export function MarioGame({ userId }: MarioGameProps) {
       drawPixelRect(context, x + 7, y + 70 + step, 24, 8);
       drawPixelRect(context, x + 58, y + 70 - step, 24, 8);
 
-      context.fillStyle = '#24130f';
-      drawPixelRect(context, 318, 20, 324, 22);
-      context.fillStyle = '#e84a3a';
-      drawPixelRect(context, 322, 24, (316 * currentBoss.health) / currentBoss.maxHealth, 14);
-      context.fillStyle = '#ffffff';
-      context.font = '700 14px Inter, sans-serif';
-      context.fillText('BOWSER', 444, 36);
+      drawBossHealthBar('BOWSER', '#e84a3a');
     }
 
     function drawFlag() {
@@ -3371,18 +3370,19 @@ export function MarioGame({ userId }: MarioGameProps) {
       drawHelper();
       drawPlayer();
       context.fillStyle = 'rgba(23, 32, 51, 0.72)';
-      drawPixelRect(context, 18, 18, 176, 36);
+      drawPixelRect(context, 18, PLAYER_HUD_Y, 176, 36);
       context.fillStyle = '#ffffff';
       context.font = '700 18px Inter, sans-serif';
-      context.fillText(`Level ${level}/${TOTAL_LEVELS}`, 34, 42);
+      context.fillText(`Level ${level}/${TOTAL_LEVELS}`, 34, PLAYER_HUD_Y + 24);
       for (let index = 0; index < 5; index += 1) {
         const heartX = 220 + index * 22;
+        const heartY = PLAYER_HUD_Y + 4;
         context.fillStyle = index < lives ? '#e84a3a' : '#5c6475';
-        drawPixelRect(context, heartX + 4, 22, 6, 6);
-        drawPixelRect(context, heartX + 12, 22, 6, 6);
-        drawPixelRect(context, heartX + 2, 28, 18, 8);
-        drawPixelRect(context, heartX + 6, 36, 10, 6);
-        drawPixelRect(context, heartX + 10, 42, 2, 2);
+        drawPixelRect(context, heartX + 4, heartY, 6, 6);
+        drawPixelRect(context, heartX + 12, heartY, 6, 6);
+        drawPixelRect(context, heartX + 2, heartY + 6, 18, 8);
+        drawPixelRect(context, heartX + 6, heartY + 14, 10, 6);
+        drawPixelRect(context, heartX + 10, heartY + 20, 2, 2);
       }
       drawOverlay();
     }
@@ -3408,37 +3408,8 @@ export function MarioGame({ userId }: MarioGameProps) {
         return;
       }
 
-      if (event.code === 'Digit0' || event.code === 'Numpad0') {
-        keysRef.current = { left: false, right: false, jump: false, fire: false, down: false };
-        progressRef.current = {
-          ...createNewProgress(),
-          level: 10,
-          coins: coinCount,
-          lives,
-        };
-        setSaveVersion((current) => current + 1);
-        setLevel(10);
-        event.preventDefault();
-        return;
-      }
-
-      if (event.code === 'Digit9' || event.code === 'Numpad9') {
-        keysRef.current = { left: false, right: false, jump: false, fire: false, down: false };
-        progressRef.current = {
-          ...createNewProgress(),
-          level: FINAL_BOSS_LEVEL,
-          coins: coinCount,
-          lives,
-        };
-        setSaveVersion((current) => current + 1);
-        setLevel(FINAL_BOSS_LEVEL);
-        event.preventDefault();
-        return;
-      }
-
       if (event.code === 'KeyB') {
-        keysRef.current = { left: false, right: false, jump: false, fire: false, down: false };
-        setLevel(BOWSER_LEVEL);
+        setIsShopOpen((current) => !current);
         event.preventDefault();
         return;
       }
@@ -3516,6 +3487,21 @@ export function MarioGame({ userId }: MarioGameProps) {
     setRunId((current) => current + 1);
   }
 
+  function goToLevel(targetLevel: number) {
+    keysRef.current = { left: false, right: false, jump: false, fire: false, down: false };
+    shopRequestRef.current = null;
+    progressRef.current = {
+      ...createNewProgress(),
+      level: targetLevel,
+      coins: hud.coins,
+      lives: hud.lives,
+    };
+    setSaveVersion((current) => current + 1);
+    setHud((current) => ({ ...current, level: targetLevel, status: 'playing', luckyText: '' }));
+    setLevel(targetLevel);
+    setRunId((current) => current + 1);
+  }
+
   function buyShopItem(itemId: ShopItemId) {
     shopRequestRef.current = itemId;
     setIsShopOpen(false);
@@ -3524,16 +3510,21 @@ export function MarioGame({ userId }: MarioGameProps) {
   return (
     <main className="game-shell">
       <section className="game-topbar" aria-label="Статистика игры">
-        <div>
-          <p className="eyebrow">nFactorial Teens</p>
-          <h1>Платформер</h1>
-        </div>
         <span className="coin-counter" aria-label={`Монеты: ${hud.coins}/${hud.totalCoins}`}>
           <span className="coin-counter-icon" aria-hidden="true" />
           {hud.coins}/{hud.totalCoins}
         </span>
         <button type="button" className="topbar-restart" onClick={restart}>
           Рестарт
+        </button>
+        <button type="button" className="topbar-restart" onClick={() => goToLevel(10)}>
+          Level 10
+        </button>
+        <button type="button" className="topbar-restart" onClick={() => goToLevel(BOWSER_LEVEL)}>
+          Level 20
+        </button>
+        <button type="button" className="topbar-restart" onClick={() => goToLevel(FINAL_BOSS_LEVEL)}>
+          Level 30
         </button>
         <div className="scoreboard">
           <span>Монеты: {hud.coins}/{hud.totalCoins}</span>
@@ -3549,16 +3540,6 @@ export function MarioGame({ userId }: MarioGameProps) {
       <section className="game-stage" aria-label="Игровое поле">
         <canvas ref={canvasRef} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} />
       </section>
-
-      <button
-        type="button"
-        className="shop-toggle"
-        aria-expanded={isShopOpen}
-        aria-controls="shop-panel"
-        onClick={() => setIsShopOpen((current) => !current)}
-      >
-        Магазин
-      </button>
       {isShopOpen ? (
         <button
           type="button"

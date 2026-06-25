@@ -614,24 +614,27 @@ h1 {
 }
 
 .game-shell {
-  display: grid;
+  display: block;
   position: fixed;
   inset: 0;
-  grid-template-rows: auto minmax(0, 1fr);
   width: 100vw;
   height: 100vh;
   height: 100dvh;
   margin: 0;
-  padding: 12px;
-  gap: 10px;
+  padding: 0;
   overflow: hidden;
+  background: #101820;
 }
 
 .game-topbar {
+  position: fixed;
+  z-index: 20;
+  top: 6px;
+  right: 14px;
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 18px;
+  gap: 14px;
   margin-bottom: 0;
 }
 
@@ -705,12 +708,14 @@ h1 {
 }
 
 .game-stage {
+  position: absolute;
+  inset: 0;
   min-height: 0;
   overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #89cdf7;
-  box-shadow: var(--shadow);
+  border: 0;
+  border-radius: 0;
+  background: #101820;
+  box-shadow: none;
 }
 
 canvas {
@@ -718,7 +723,7 @@ canvas {
   width: 100%;
   height: 100%;
   min-height: 0;
-  object-fit: contain;
+  object-fit: cover;
   image-rendering: pixelated;
   image-rendering: crisp-edges;
   touch-action: none;
@@ -751,29 +756,6 @@ canvas {
 .shop-panel-open {
   transform: translateX(0);
   pointer-events: auto;
-}
-
-.shop-toggle {
-  position: fixed;
-  z-index: 25;
-  right: 12px;
-  top: 50%;
-  min-width: 48px;
-  min-height: 150px;
-  padding: 12px 10px;
-  writing-mode: vertical-rl;
-  text-orientation: mixed;
-  transform: translateY(-50%);
-  background: #22624c;
-  box-shadow: var(--shadow);
-}
-
-.shop-toggle:hover {
-  background: #194d3b;
-}
-
-.shop-toggle:active {
-  transform: translateY(-50%);
 }
 
 .shop-backdrop {
@@ -1195,7 +1177,7 @@ canvas {
 
   .game-shell {
     width: 100vw;
-    padding: 8px;
+    padding: 0;
   }
 
   .game-topbar {
@@ -1204,6 +1186,9 @@ canvas {
     flex-wrap: wrap;
     justify-content: flex-end;
     gap: 8px;
+    top: 6px;
+    right: 8px;
+    left: 8px;
   }
 
   .game-topbar > div:first-child {
